@@ -27,7 +27,7 @@ export interface GameMap {
   w: number;
   h: number;
   tiles: Uint8Array; // Tile per cell
-  woodAmount: Uint16Array; // per forest tile
+  woodAmount: Float32Array; // per forest tile (float: chopped in fractions)
   deposits: Deposit[];
   starts: { tx: number; ty: number }[]; // faction start positions
   citySites: { tx: number; ty: number; major: boolean }[]; // settlement locations
@@ -62,7 +62,7 @@ export function moveCost(t: Tile): number {
 export function generateMap(seed: number, w = 128, h = 128): GameMap {
   const rng = makeRng(seed);
   const tiles = new Uint8Array(w * h).fill(Tile.Grass);
-  const woodAmount = new Uint16Array(w * h);
+  const woodAmount = new Float32Array(w * h);
   const deposits: Deposit[] = [];
   let depId = 1;
   const at = (tx: number, ty: number) => ty * w + tx;

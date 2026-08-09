@@ -1,8 +1,11 @@
 import Phaser from 'phaser';
-import { TILE, TICK_MS, Tile, World, isBlocked, unitDef, type UnitState } from '@cr/core';
+import {
+  BUILDING_DEFS, TILE, TICK_MS, Tile, World, buildingDef, canPlace, isBlocked, tileAt,
+  type BuildingState, type UnitState,
+} from '@cr/core';
 import { FACTION_BY_ID, type FactionId } from '@cr/shared';
 import { useHud } from '../../store';
-import { UNIT_TEXTURE, generateTextures } from '../textures';
+import { UNIT_TEXTURE, generateBuildingTextures, generateTextures } from '../textures';
 
 const OWNER_FACTION: FactionId[] = ['dominion', 'river', 'hills'];
 
@@ -15,14 +18,25 @@ interface UnitView {
   curY: number;
 }
 
+interface BuildingView {
+  container: Phaser.GameObjects.Container;
+  body: Phaser.GameObjects.Image;
+  bar: Phaser.GameObjects.Graphics;
+  ring: Phaser.GameObjects.Graphics;
+  built: boolean;
+  lastProgress: number;
+}
+
 export class WorldScene extends Phaser.Scene {
   world!: World;
   readonly playerId = 0;
   factionId: FactionId = 'dominion';
 
   private views = new Map<number, UnitView>();
+  private bviews = new Map<number, BuildingView>();
   private selected = new Set<number>();
   private groups = new Map<number, number[]>();
+  private ghost!: Phaser.GameObjects.Graphics;
 
   private simAcc = 0;
   private fogBlack!: Phaser.GameObjects.RenderTexture;
@@ -43,29 +57,28 @@ export class WorldScene extends Phaser.Scene {
 
   create() {
     this.world = new World(this.seed, OWNER_FACTION);
+    generateTextures(this);
+    generateBuildingTextures(this, BUILDING_DEFS, TILE);
+
     const start = this.world.map.starts[this.playerId];
-    // initial forces: 6 workers + 3 militia around town center
-    for (let i = 0; i < 6; i++) {
-      const t = scatter(start.tx, start.ty, i);
-      const u = this.world.spawnUnit(this.playerId, 'worker', t.tx, t.ty);
-      if (u) u.hp = unitDef('worker').hp;
-    }
-    for (let i = 0; i < 3; i++) {
-      const t = scatter(start.tx + 2, start.ty + 2, i);
-      const u = this.world.spawnUnit(this.playerId, 'militia', t.tx, t.ty);
-      if (u) u.hp = unitDef('militia').hp;
-    }
-    // enemy scouts so fog/combat visuals can be seen (stripped-down phase 1 AI)
-    for (let p = 1; p < OWNER_FACTION.length; p++) {
+    // starting settlements: pre-built town center per faction + starting forces
+    for (let p = 0; p < OWNER_FACTION.length; p++) {
       const s = this.world.map.starts[p];
-      for (let i = 0; i < 4; i++) {
-        const t = scatter(s.tx, s.ty, i);
-        const u = this.world.spawnUnit(p, i % 2 ? 'militia' : 'worker', t.tx, t.ty);
-        if (u) u.hp = unitDef(u.type).hp;
+      this.world.placeBuilding(p, 'townCenter', s.tx - 1, s.ty - 1, true);
+      const isPlayer = p === this.playerId;
+      const forces = isPlayer
+        ? ['worker', 'worker', 'worker', 'worker', 'worker', 'worker', 'militia', 'militia', 'militia']
+        : ['worker', 'worker', 'worker', 'worker', 'militia', 'militia'];
+      for (const type of forces) {
+        for (let i = 0; i < 40; i++) {
+          const t = scatter(s.tx + 3, s.ty + 1, i);
+          if (this.world.spawnUnit(p, type, t.tx, t.ty)) break;
+        }
       }
     }
+    void start;
 
-    generateTextures(this);
+    this.ghost = this.add.graphics().setDepth(9500);
     this.paintTerrain();
     this.buildFogLayers();
     this.setupInput();
@@ -201,10 +214,20 @@ export class WorldScene extends Phaser.Scene {
         return;
       }
       if (p.rightButtonDown()) {
+        if (useHud.getState().buildKey) {
+          useHud.getState().setBuildKey(null);
+          this.ghost.clear();
+          return;
+        }
         this.issueMoveOrder(world);
         return;
       }
       if (p.leftButtonDown()) {
+        const store = useHud.getState();
+        if (store.buildKey) {
+          this.tryPlaceBuilding(store.buildKey, world, p.event.shiftKey);
+          return;
+        }
         const hit = this.pickUnit(world);
         if (hit) {
           const now = this.time.now;
@@ -214,13 +237,22 @@ export class WorldScene extends Phaser.Scene {
           else if (p.event.shiftKey) this.toggleSelected(hit.id);
           else this.setSelected([hit.id]);
         } else {
-          this.dragStart = { x: world.x, y: world.y };
-          this.dragging = true;
+          const bhit = this.pickBuilding(world);
+          if (bhit && bhit.owner === this.playerId) {
+            useHud.getState().setSelectedBuilding(bhit.id);
+            this.setSelected([]);
+          } else {
+            useHud.getState().setSelectedBuilding(null);
+            this.dragStart = { x: world.x, y: world.y };
+            this.dragging = true;
+          }
         }
       }
     });
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      const store = useHud.getState();
+      if (store.buildKey) this.drawGhost(store.buildKey, p);
       if (this.middleDrag && p.middleButtonDown()) {
         const cam = this.cameras.main;
         cam.scrollX -= (p.x - this.middleDrag.px) / cam.zoom;
@@ -257,7 +289,12 @@ export class WorldScene extends Phaser.Scene {
     });
 
     this.input.keyboard!.on('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Escape') this.setSelected([]);
+      if (e.key === 'Escape') {
+        useHud.getState().setBuildKey(null);
+        useHud.getState().setSelectedBuilding(null);
+        this.ghost.clear();
+        this.setSelected([]);
+      }
       if ((e.key === 's' || e.key === 'S') && this.selected.size) {
         this.world.enqueue({ type: 'stop', player: this.playerId, unitIds: [...this.selected] });
       }
@@ -345,12 +382,56 @@ export class WorldScene extends Phaser.Scene {
     else this.setSelected(ids);
   }
 
+  private pickBuilding(world: Phaser.Math.Vector2): BuildingState | null {
+    for (const b of this.world.buildings.values()) {
+      const d = buildingDef(b.key);
+      if (world.x >= b.tx * TILE && world.x < (b.tx + d.w) * TILE && world.y >= b.ty * TILE && world.y < (b.ty + d.h) * TILE) return b;
+    }
+    return null;
+  }
+
+  private drawGhost(key: string, p: Phaser.Input.Pointer) {
+    const def = buildingDef(key);
+    const world = p.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
+    const tx = Math.floor(world.x / TILE);
+    const ty = Math.floor(world.y / TILE);
+    const v = canPlace(this.world, key, tx, ty);
+    this.ghost.clear();
+    this.ghost.fillStyle(v.ok ? 0x2fa04f : 0xa03030, 0.35);
+    this.ghost.fillRect(tx * TILE, ty * TILE, def.w * TILE, def.h * TILE);
+    this.ghost.lineStyle(1, v.ok ? 0x7fe090 : 0xd06060, 1);
+    this.ghost.strokeRect(tx * TILE, ty * TILE, def.w * TILE, def.h * TILE);
+  }
+
+  private tryPlaceBuilding(key: string, world: Phaser.Math.Vector2, shift: boolean) {
+    const tx = Math.floor(world.x / TILE);
+    const ty = Math.floor(world.y / TILE);
+    if (!canPlace(this.world, key, tx, ty).ok) return;
+    const workers = [...this.selected].filter((id) => this.world.units.get(id)?.type === 'worker');
+    if (!workers.length) return;
+    this.world.enqueue({ type: 'build', player: this.playerId, unitIds: workers, key, tx, ty });
+    if (!shift) {
+      useHud.getState().setBuildKey(null);
+      this.ghost.clear();
+    }
+  }
+
   private issueMoveOrder(world: Phaser.Math.Vector2) {
     if (!this.selected.size) return;
     const tx = Math.floor(world.x / TILE);
     const ty = Math.floor(world.y / TILE);
+    const selected = [...this.selected];
+    const workers = selected.filter((id) => this.world.units.get(id)?.type === 'worker');
+    const deposit = this.world.map.deposits.find((d) => Math.abs(d.tx - tx) <= 1 && Math.abs(d.ty - ty) <= 1 && d.amount > 0);
+    const forest = tileAt(this.world.map, tx, ty) === Tile.Forest;
+    if (workers.length && (deposit || forest)) {
+      const target = deposit ? { tx: deposit.tx, ty: deposit.ty } : { tx, ty };
+      if (!deposit && isBlocked(this.world.map, tx, ty)) return;
+      this.world.enqueue({ type: 'gather', player: this.playerId, unitIds: workers, tx: target.tx, ty: target.ty });
+      return;
+    }
     if (isBlocked(this.world.map, tx, ty)) return;
-    this.world.enqueue({ type: 'move', player: this.playerId, unitIds: [...this.selected], tx, ty });
+    this.world.enqueue({ type: 'move', player: this.playerId, unitIds: selected, tx, ty });
     // move marker
     const m = this.add.graphics().setDepth(5000);
     m.lineStyle(2, 0xd8b13a, 1);
@@ -375,6 +456,7 @@ export class WorldScene extends Phaser.Scene {
 
     this.handleCamera(delta);
     this.syncViews(alpha);
+    this.syncBuildings();
 
     const fog = this.world.players[this.playerId].fog;
     if (fog.dirty) {
@@ -388,7 +470,60 @@ export class WorldScene extends Phaser.Scene {
       // drop dead ids from selection
       const alive = [...this.selected].filter((id) => this.world.units.has(id));
       if (alive.length !== this.selected.size) this.setSelected(alive);
+      const pl = this.world.players[this.playerId];
+      useHud.getState().setEconomy({ ...pl.res }, pl.popUsed, pl.popCap, pl.starving);
     }
+  }
+
+  private syncBuildings() {
+    const store = useHud.getState();
+    const seen = new Set<number>();
+    for (const b of this.world.buildings.values()) {
+      seen.add(b.id);
+      let v = this.bviews.get(b.id);
+      if (!v) {
+        v = this.makeBuildingView(b);
+        this.bviews.set(b.id, v);
+      }
+      if (b.built && !v.built) {
+        v.built = true;
+        v.body.setTexture(`bld-${b.key}`);
+        v.bar.clear();
+      }
+      if (!b.built) {
+        const prog = Math.floor(b.progress * 20);
+        if (prog !== v.lastProgress) {
+          v.lastProgress = prog;
+          v.bar.clear();
+          const d = buildingDef(b.key);
+          v.bar.fillStyle(0x000000, 0.6).fillRect(0, -6, d.w * TILE, 5);
+          v.bar.fillStyle(0x7fe090).fillRect(1, -5, (d.w * TILE - 2) * b.progress, 3);
+        }
+      }
+      v.ring.visible = store.selectedBuilding === b.id;
+    }
+    for (const [id, v] of this.bviews) {
+      if (!seen.has(id)) {
+        v.container.destroy();
+        this.bviews.delete(id);
+      }
+    }
+  }
+
+  private makeBuildingView(b: BuildingState): BuildingView {
+    const d = buildingDef(b.key);
+    const faction = FACTION_BY_ID[OWNER_FACTION[b.owner]];
+    const body = this.add.image(0, 0, b.built ? `bld-${b.key}` : `bld-${b.key}-scaffold`).setOrigin(0);
+    const banner = this.add.graphics();
+    banner.fillStyle(faction.color).fillRect(d.w * TILE - 10, 2, 8, 12);
+    const bar = this.add.graphics();
+    const ring = this.add.graphics();
+    ring.lineStyle(2, 0xd8b13a, 0.9);
+    ring.strokeRect(0, 0, d.w * TILE, d.h * TILE);
+    ring.visible = false;
+    const c = this.add.container(b.tx * TILE, b.ty * TILE, [body, banner, bar, ring]);
+    c.setDepth(50);
+    return { container: c, body, bar, ring, built: b.built, lastProgress: -1 };
   }
 
   private snapPrevious() {

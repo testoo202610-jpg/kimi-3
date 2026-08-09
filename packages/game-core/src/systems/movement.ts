@@ -18,7 +18,7 @@ export class MovementSystem {
       if (!u.order || u.order.kind === 'stop' || u.order.kind === 'hold' || !u.path) continue;
       const wp = u.path[u.pathIdx];
       if (!wp) {
-        u.order = u.order.kind === 'attackMove' ? u.order : null; // arrive
+        u.order = null; // arrival; task-phase manager (economy) owns composite orders
         u.path = null;
         continue;
       }

@@ -7,12 +7,22 @@ const SPEEDS: GameSpeed[] = [0, 0.5, 1, 2, 4];
 export function TopBar() {
   const speed = useHud((s) => s.speed);
   const setSpeed = useHud((s) => s.setSpeed);
+  const res = useHud((s) => s.res);
+  const popUsed = useHud((s) => s.popUsed);
+  const popCap = useHud((s) => s.popCap);
+  const starving = useHud((s) => s.starving);
+  const faction = FACTIONS[0];
 
   return (
     <div style={styles.bar}>
       <span style={styles.title}>Crimson Ramparts</span>
-      <span style={styles.faction}>Northern Dominion — the Iron Plains</span>
-      <span style={styles.res}>Food — · Wood — · Stone — · Iron — · Gold — · Pop —</span>
+      <span style={styles.faction}>{faction.name} — {faction.epithet}</span>
+      <span style={styles.res}>
+        Food {fmt(res?.food)} · Wood {fmt(res?.wood)} · Stone {fmt(res?.stone)} · Iron {fmt(res?.iron)} · Gold {fmt(res?.gold)} · Horses {fmt(res?.horses)}
+      </span>
+      <span style={{ color: starving ? '#e05050' : '#a99a7c' }}>
+        Pop {popUsed}/{popCap}{starving ? ' — STARVING' : ''}
+      </span>
       <span style={styles.spacer} />
       {SPEEDS.map((s) => (
         <button
@@ -27,8 +37,8 @@ export function TopBar() {
   );
 }
 
-export function factionName(id: number) {
-  return FACTIONS[id]?.name ?? '—';
+function fmt(v: number | undefined): string {
+  return v == null ? '—' : String(Math.floor(v));
 }
 
 const styles: Record<string, CSSProperties> = {

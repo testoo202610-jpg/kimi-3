@@ -79,6 +79,49 @@ export function generateTextures(scene: Phaser.Scene) {
   g.destroy();
 }
 
+// building styles per key: [wallColor, roofColor] (original geometric art)
+const BLDCOLORS: Record<string, [number, number]> = {
+  townCenter: [0xcbb590, 0x8a4a3a],
+  house: [0xbfa87c, 0x6a5a6a],
+  farm: [0xd8c89a, 0x5a7a4a],
+  granary: [0xd8c89a, 0x9a7a2f],
+  lumberCamp: [0xbfa87c, 0x4a6a3a],
+  stoneCamp: [0xbab5a8, 0x5a5a52],
+  mineCamp: [0xa89a8a, 0x4a3a3a],
+  warehouse: [0xcbb590, 0x6a6a2f],
+  watchtower: [0xbab5a8, 0x8a4a3a],
+};
+
+export function generateBuildingTextures(scene: Phaser.Scene, defs: Record<string, { w: number; h: number }>, tile: number) {
+  for (const [key, def] of Object.entries(defs)) {
+    const [wall, roof] = BLDCOLORS[key] ?? [0xcbb590, 0x6a5a6a];
+    const w = def.w * tile;
+    const h = def.h * tile;
+    const g = scene.add.graphics();
+    // walls
+    g.fillStyle(wall).fillRect(2, Math.floor(h * 0.4), w - 4, Math.ceil(h * 0.6) - 2);
+    // roof: trapezoid with upturned eaves
+    g.fillStyle(roof);
+    g.fillTriangle(2, Math.floor(h * 0.4), w / 2, 2, w - 2, Math.floor(h * 0.4));
+    g.lineStyle(2, 0x2a2118, 0.7);
+    g.strokeRect(2, Math.floor(h * 0.4), w - 4, Math.ceil(h * 0.6) - 2);
+    g.lineBetween(w / 2, 2, w / 2, Math.floor(h * 0.4));
+    // door
+    g.fillStyle(0x2a2118, 0.85).fillRect(w / 2 - 3, h - 10, 6, 8);
+    g.generateTexture(`bld-${key}`, w, h);
+    // scaffold version for construction
+    g.clear();
+    g.fillStyle(0x8a7050, 0.45).fillRect(0, 0, w, h);
+    g.lineStyle(2, 0xa08050, 0.9).strokeRect(1, 1, w - 2, h - 2);
+    g.lineBetween(0, 0, w, h);
+    g.lineBetween(w, 0, 0, h);
+    g.lineBetween(0, h / 2, w, h / 2);
+    g.lineBetween(w / 2, 0, w / 2, h);
+    g.generateTexture(`bld-${key}-scaffold`, w, h);
+    g.destroy();
+  }
+}
+
 export const UNIT_TEXTURE: Record<string, string> = {
   worker: 'unit-worker',
   militia: 'unit-militia',
