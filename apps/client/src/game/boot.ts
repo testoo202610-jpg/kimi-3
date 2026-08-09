@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { WorldScene } from './scenes/WorldScene';
+import type { BootConfig } from '../store';
 
-export function bootGame(parent: HTMLElement): Phaser.Game {
-  return new Phaser.Game({
+export function bootGame(parent: HTMLElement, config: BootConfig): Phaser.Game {
+  const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent,
     backgroundColor: '#14100c',
@@ -15,4 +16,7 @@ export function bootGame(parent: HTMLElement): Phaser.Game {
     fps: { target: 60 },
     banner: false,
   });
+  // Phaser boots scenes on its first RAF, after this synchronous block
+  game.registry.set('bootConfig', config);
+  return game;
 }

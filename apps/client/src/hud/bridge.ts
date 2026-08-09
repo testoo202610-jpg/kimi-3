@@ -12,3 +12,8 @@ export function bridgePlayerId(): number {
 export function bridgeEnqueue(cmd: Command) {
   (window as any).__cr_scene?.world.enqueue(cmd);
 }
+
+/** jump camera to a world-pixel position (minimap clicks) */
+export function bridgeCameraTo(x: number, y: number) {
+  (window as any).__cr_scene?.cameras?.main?.centerOn(x, y);
+}

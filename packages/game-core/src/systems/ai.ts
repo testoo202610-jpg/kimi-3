@@ -58,6 +58,11 @@ export class AISystem {
     this.cfgs.set(player, difficulty);
   }
 
+  /** serializable view of who is AI-driven (restored after save/load) */
+  snapshot(): [number, Difficulty][] {
+    return [...this.cfgs.entries()];
+  }
+
   remove(player: number) {
     this.cfgs.delete(player);
   }

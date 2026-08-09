@@ -4,10 +4,8 @@ import {
   type BuildingState, type UnitState,
 } from '@cr/core';
 import { FACTION_BY_ID, type FactionId } from '@cr/shared';
-import { useHud } from '../../store';
+import { useHud, type BootConfig } from '../../store';
 import { UNIT_TEXTURE, generateBuildingTextures, generateTextures } from '../textures';
-
-const OWNER_FACTION: FactionId[] = ['dominion', 'river', 'hills'];
 
 interface UnitView {
   container: Phaser.GameObjects.Container;
@@ -31,7 +29,7 @@ interface BuildingView {
 
 export class WorldScene extends Phaser.Scene {
   world!: World;
-  readonly playerId = 0;
+  playerId = 0;
   factionId: FactionId = 'dominion';
 
   private views = new Map<number, UnitView>();
@@ -53,42 +51,48 @@ export class WorldScene extends Phaser.Scene {
   private lastClick = { id: -1, time: 0 };
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private hudTimer = 0;
-  private seed: number;
+  private lastEra = 0;
+  private attackAlarmAt = 0;
 
   constructor() {
     super('world');
-    this.seed = (Date.now() % 100000) | 1;
   }
 
   create() {
-    this.world = new World(this.seed, OWNER_FACTION);
+    const cfg = this.registry.get('bootConfig') as BootConfig;
+    this.playerId = 0; // single-player: local player is always faction slot 0
+    this.factionId = cfg.factions[0];
+    this.world = cfg.save ? World.deserialize(cfg.save) : new World(cfg.seed | 1, cfg.factions);
+    for (const a of cfg.ai) this.world.ai.add(a.player, a.difficulty);
     generateTextures(this);
     generateBuildingTextures(this, BUILDING_DEFS, TILE);
 
     const start = this.world.map.starts[this.playerId];
-    // starting settlements: pre-built town center per faction + starting forces
-    for (let p = 0; p < OWNER_FACTION.length; p++) {
-      const s = this.world.map.starts[p];
-      this.world.placeBuilding(p, 'townCenter', s.tx - 1, s.ty - 1, true);
-      const isPlayer = p === this.playerId;
-      const forces = isPlayer
-        ? ['worker', 'worker', 'worker', 'worker', 'worker', 'worker', 'militia', 'militia', 'militia']
-        : ['worker', 'worker', 'worker', 'worker', 'militia', 'militia'];
-      for (const type of forces) {
-        for (let i = 0; i < 40; i++) {
-          const t = scatter(s.tx + 3, s.ty + 1, i);
-          if (this.world.spawnUnit(p, type, t.tx, t.ty)) break;
+    if (!cfg.save) {
+      // starting settlements: pre-built town center per faction + starting forces
+      for (let p = 0; p < cfg.factions.length; p++) {
+        const s = this.world.map.starts[p];
+        this.world.placeBuilding(p, 'townCenter', s.tx - 1, s.ty - 1, true);
+        const isPlayer = p === this.playerId;
+        const forces = isPlayer
+          ? ['worker', 'worker', 'worker', 'worker', 'worker', 'worker', 'militia', 'militia', 'militia']
+          : ['worker', 'worker', 'worker', 'worker', 'militia', 'militia'];
+        for (const type of forces) {
+          for (let i = 0; i < 40; i++) {
+            const t = scatter(s.tx + 3, s.ty + 1, i);
+            if (this.world.spawnUnit(p, type, t.tx, t.ty)) break;
+          }
         }
-      }
-      // generals: two named heroes per faction start beside the town center
-      for (const gkey of GENERALS_BY_LEAN[OWNER_FACTION[p]] ?? []) {
-        for (let i = 0; i < 40; i++) {
-          const t = scatter(s.tx + 2, s.ty + 3, i);
-          if (this.world.spawnUnit(p, gkey, t.tx, t.ty)) break;
+        // generals: two named heroes per faction start beside the town center
+        for (const gkey of GENERALS_BY_LEAN[cfg.factions[p]] ?? []) {
+          for (let i = 0; i < 40; i++) {
+            const t = scatter(s.tx + 2, s.ty + 3, i);
+            if (this.world.spawnUnit(p, gkey, t.tx, t.ty)) break;
+          }
         }
       }
     }
-    void start;
+    this.lastEra = this.world.players[this.playerId].era;
 
     this.ghost = this.add.graphics().setDepth(9500);
     this.projLayer = this.add.graphics().setDepth(6000);
@@ -317,11 +321,14 @@ export class WorldScene extends Phaser.Scene {
 
     this.input.keyboard!.on('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        const store = useHud.getState();
+        const hadContext = this.attackMoveMode || store.buildKey || store.selectedBuilding || this.selected.size;
         this.attackMoveMode = false;
-        useHud.getState().setBuildKey(null);
-        useHud.getState().setSelectedBuilding(null);
+        store.setBuildKey(null);
+        store.setSelectedBuilding(null);
         this.ghost.clear();
         this.setSelected([]);
+        if (!hadContext) store.setGameMenuOpen(!store.gameMenuOpen); // bare Esc toggles the pause menu
       }
       if ((e.key === 'a' || e.key === 'A') && this.selected.size) {
         this.attackMoveMode = true; // next right-click = attack-move
@@ -536,6 +543,21 @@ export class WorldScene extends Phaser.Scene {
       if (alive.length !== this.selected.size) this.setSelected(alive);
       const pl = this.world.players[this.playerId];
       useHud.getState().setEconomy({ ...pl.res }, pl.popUsed, pl.popCap, pl.starving, pl.era);
+      // era advanced
+      if (pl.era > this.lastEra) {
+        this.lastEra = pl.era;
+        useHud.getState().notify('Your realm advances to the next era!', 'good');
+      }
+      // under-attack alarm: own units in combat (10 s cooldown, throttled scan)
+      if (this.world.tickCount - this.attackAlarmAt > 160) {
+        for (const u of this.world.units.values()) {
+          if (u.owner === this.playerId && u.combat) {
+            this.attackAlarmAt = this.world.tickCount;
+            useHud.getState().notify('You are under attack!', 'warn');
+            break;
+          }
+        }
+      }
     }
   }
 
@@ -569,6 +591,9 @@ export class WorldScene extends Phaser.Scene {
         v.built = true;
         v.body.setTexture(`bld-${b.key}`);
         v.bar.clear();
+        if (b.owner === this.playerId) {
+          useHud.getState().notify(`${buildingDef(b.key).name} completed`, 'good');
+        }
       }
       if (!b.built) {
         const prog = Math.floor(b.progress * 20);
@@ -592,7 +617,7 @@ export class WorldScene extends Phaser.Scene {
 
   private makeBuildingView(b: BuildingState): BuildingView {
     const d = buildingDef(b.key);
-    const faction = FACTION_BY_ID[OWNER_FACTION[b.owner]];
+    const faction = FACTION_BY_ID[this.world.players[b.owner].faction as FactionId];
     const body = this.add.image(0, 0, b.built ? `bld-${b.key}` : `bld-${b.key}-scaffold`).setOrigin(0);
     const banner = this.add.graphics();
     banner.fillStyle(faction.color).fillRect(d.w * TILE - 10, 2, 8, 12);
@@ -660,7 +685,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private makeView(u: UnitState): UnitView {
-    const faction = FACTION_BY_ID[OWNER_FACTION[u.owner]];
+    const faction = FACTION_BY_ID[this.world.players[u.owner].faction as FactionId];
     const ring = this.add.graphics();
     ring.lineStyle(2, 0xffffff, 0.9);
     ring.strokeEllipse(0, 8, 26, 10);
@@ -685,9 +710,9 @@ export class WorldScene extends Phaser.Scene {
     if (k.S.isDown || k.DOWN.isDown) dy += 1;
     if (k.A.isDown || k.LEFT.isDown) dx -= 1;
     if (k.D.isDown || k.RIGHT.isDown) dx += 1;
-    // edge scroll (disabled while middle-dragging)
+    // edge scroll (disabled while middle-dragging or in settings)
     const p = this.input.activePointer;
-    if (!this.middleDrag && p && this.input.manager.canvas) {
+    if (useHud.getState().settings.edgeScroll && !this.middleDrag && p && this.input.manager.canvas) {
       const M = 20;
       if (p.x >= 0 && p.x < M) dx -= 1;
       if (p.x <= cam.width && p.x > cam.width - M) dx += 1;

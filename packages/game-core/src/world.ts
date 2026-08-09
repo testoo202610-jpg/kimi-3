@@ -298,7 +298,6 @@ export class World {
   private apply(cmd: Command) {
     const player = this.players[cmd.player];
     if (!player) return;
-    if (process.env.CR_DEBUG) console.error('APPLY', this.tickCount, cmd.type, JSON.stringify(cmd).slice(0, 120));
     if (cmd.type === 'setRelation') {
       if (this.players[cmd.target] && cmd.target !== cmd.player) {
         this.diplomacy[cmd.player][cmd.target] = cmd.relation;
@@ -588,6 +587,9 @@ export class World {
       diplomacy: this.diplomacy.map((row) => [...row]),
       deposits: this.map.deposits.map((d) => ({ ...d })),
       woodAmount: [...this.map.woodAmount],
+      fogExplored: this.players.map((p) => Array.from(p.fog.explored)),
+      formations: [...this.playerFormation],
+      ai: this.ai.snapshot(),
     };
   }
 
@@ -619,6 +621,14 @@ export class World {
         w.buildingTiles.set(t.ty * w.map.w + t.tx, copy);
       }
     }
+    if (s.fogExplored) s.fogExplored.forEach((grid, i) => {
+      if (w.players[i] && grid.length === w.players[i].fog.explored.length) {
+        w.players[i].fog.explored.set(grid);
+        w.players[i].fog.dirty = true;
+      }
+    });
+    if (s.formations) s.formations.forEach((f, i) => (w.playerFormation[i] = f));
+    if (s.ai) for (const [pid, diff] of s.ai) w.ai.add(pid, diff);
     return w;
   }
 }
@@ -637,6 +647,9 @@ export interface SerializedWorld {
   diplomacy?: Relation[][];
   deposits: { id: number; amount: number }[];
   woodAmount: number[];
+  fogExplored?: number[][];
+  formations?: Formation[];
+  ai?: [number, import('./systems/ai').Difficulty][];
 }
 
 // formation offsets for group move targets — prevents stacking, shapes the army

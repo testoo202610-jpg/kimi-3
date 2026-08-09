@@ -72,4 +72,18 @@ describe('world movement', () => {
     expect(s.nextUnitId).toBe(w.nextUnitId);
     expect([...s.units.values()][0].x).toBe([...w.units.values()][0].x);
   });
+
+  it('save round-trips fog exploration, formations and AI config', () => {
+    const w = makeWorld();
+    w.spawnUnit(0, 'worker', 10, 10);
+    for (let i = 0; i < 8; i++) w.tick(TICK_MS); // fog explored around spawn
+    w.playerFormation[0] = 'wedge';
+    w.ai.add(1, 'hard');
+    const s = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
+    const idx = 10 * s.map.w + 10;
+    expect(s.players[0].fog.explored[idx]).toBe(1); // explored memory survives
+    expect(s.players[0].fog.explored[(s.map.h - 2) * s.map.w + s.map.w - 2]).toBe(0);
+    expect(s.playerFormation[0]).toBe('wedge');
+    expect(s.ai.snapshot()).toEqual([[1, 'hard']]);
+  });
 });
