@@ -151,6 +151,9 @@ export function canPlace(world: World, key: string, tx: number, ty: number): Pla
     if (tile === Tile.Mountain || tile === Tile.River || tile === Tile.Bridge)
       return { ok: false, reason: 'terrain' };
     if (world.buildingAt(t.tx, t.ty)) return { ok: false, reason: 'occupied' };
+    // don't bury a live deposit under a building (its gatherers would deadlock)
+    const dep = world.map.deposits.find((d) => d.tx === t.tx && d.ty === t.ty);
+    if (dep && dep.amount > 0) return { ok: false, reason: 'deposit' };
   }
   if (def.terrain === 'farmland' && !placementTouches(world.map, key, tx, ty, Tile.Farmland))
     return { ok: false, reason: 'needs farmland' };

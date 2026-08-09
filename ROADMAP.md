@@ -15,7 +15,7 @@ Each phase ends with: tests green, `typecheck` green, `lint` green,
       territory projection, era upgrades, wall/gate/tower.
 - [x] Phase 5 — Strategic: generals, armies, abilities, supply system,
       diplomacy, city capture by occupation.
-- [ ] Phase 6 — AI: economy/expansion/military planners, faction personas,
+- [x] Phase 6 — AI: economy/expansion/military planners, faction personas,
       difficulty tiers, anti-cheat audit test (Hard AI gains no free stuff).
 - [ ] Phase 7 — UX: main menu, faction select, skirmish setup, minimap,
       notifications, settings, game speeds, save/load (local + server),

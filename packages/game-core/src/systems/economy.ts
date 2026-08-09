@@ -72,7 +72,22 @@ export class EconomySystem {
 
   // ---- workers ----
   private tickWorker(world: World, u: UnitState, dt: number) {
-    if (!u.task || u.type !== 'worker') return;
+    if (u.type !== 'worker') return;
+    if (!u.task) {
+      // ponytail: this recovery re-targets the dropoff as the gather site —
+      // after depositing the pack the worker walks back to the dropoff once,
+      // then goes taskless for the AI/UI to reassign. Store the original
+      // source in UnitTask when worker recovery needs full autonomy.
+      if (!u.carry || u.order || u.path) return;
+      if (!u.carry || u.order || u.path) return;
+      const drop = this.nearestDropoff(world, u);
+      if (!drop) return;
+      const adj = freeAdjacentTile(world, drop, Math.floor(u.x / TILE), Math.floor(u.y / TILE));
+      if (!adj) return;
+      u.task = { kind: 'gather', phase: 'delivering', tx: adj.tx, ty: adj.ty, buildingId: drop.id };
+      world.requestPath(u, adj.tx, adj.ty);
+      return;
+    }
     if (u.order || u.path) return; // still walking to current leg
 
     if (u.task.kind === 'build') {
@@ -81,13 +96,27 @@ export class EconomySystem {
         u.task = null;
         return;
       }
-      // path from current spot to the remembered adjacency tile is done → working
+      // "not walking" is not "arrived": only count it done when standing on
+      // the remembered work tile, otherwise re-path (a dropped/stale request
+      // must not teleport the build site to the worker)
+      const curTx = Math.floor(u.x / TILE);
+      const curTy = Math.floor(u.y / TILE);
+      if (curTx !== u.task.tx || curTy !== u.task.ty) {
+        world.requestPath(u, u.task.tx, u.task.ty);
+        return;
+      }
       u.task.phase = 'working';
       return; // construction progress counted in tickBuilding
     }
 
     if (u.task.kind === 'gather') {
       if (u.task.phase === 'goto') {
+        const curTx = Math.floor(u.x / TILE);
+        const curTy = Math.floor(u.y / TILE);
+        if (curTx !== u.task.tx || curTy !== u.task.ty) {
+          world.requestPath(u, u.task.tx, u.task.ty);
+          return;
+        }
         u.task.phase = 'working';
         return;
       }

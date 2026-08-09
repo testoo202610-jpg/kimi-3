@@ -61,6 +61,14 @@ const DIRS = [
   [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2],
 ] as const;
 
+// scratch buffers reused across searches (sim is single-threaded) — a fresh
+// 16K-tile alloc per A* was the top GC/allocation cost in profiling
+let gBuf = new Float32Array(0);
+let cameBuf = new Int32Array(0);
+let closedBuf = new Uint8Array(0);
+let stamp = new Uint32Array(0);
+let stampGen = 0;
+
 /** Returns path INCLUDING start tile and end tile, cheapest first; null if unreachable. */
 export function findPath(
   grid: CostGrid,
@@ -74,22 +82,38 @@ export function findPath(
   const { w, h } = grid;
   if (ex < 0 || ey < 0 || ex >= w || ey >= h || grid.cost(ex, ey) === Infinity) return null;
   const N = w * h;
-  const g = new Float32Array(N).fill(Infinity);
-  const came = new Int32Array(N).fill(-1);
-  const closed = new Uint8Array(N);
+  if (gBuf.length < N) {
+    gBuf = new Float32Array(N);
+    cameBuf = new Int32Array(N);
+    closedBuf = new Uint8Array(N);
+    stamp = new Uint32Array(N);
+    stampGen = 0;
+  }
+  // stamping avoids re-filling g/came/closed each call: a cell counts as
+  // fresh when its stamp differs from the current generation
+  stampGen++;
+  const g = gBuf;
+  const came = cameBuf;
+  const closed = closedBuf;
   const heap = new Heap();
   const s0 = sy * w + sx;
+  stamp[s0] = stampGen;
   g[s0] = 0;
+  closed[s0] = 0;
+  came[s0] = -1;
   heap.push(0, s0);
+  // 0.7 = cheapest tile cost (roads): keeps the heuristic admissible so A*
+  // explores far fewer nodes while staying correct.
   const hOctile = (x: number, y: number) => {
     const dx = Math.abs(x - ex);
     const dy = Math.abs(y - ey);
-    return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
+    return (Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy)) * 0.7;
   };
   let iter = 0;
   while (heap.size && iter++ < maxIter) {
     const cur = heap.pop();
-    if (closed[cur]) continue;
+    if (stamp[cur] === stampGen && closed[cur]) continue;
+    stamp[cur] = stampGen;
     closed[cur] = 1;
     const cx = cur % w;
     const cy = (cur / w) | 0;
@@ -114,6 +138,11 @@ export function findPath(
         if (grid.cost(cx + dx, cy) === Infinity || grid.cost(cx, cy + dy) === Infinity) continue;
       }
       const ni = ny * w + nx;
+      if (stamp[ni] !== stampGen) {
+        stamp[ni] = stampGen;
+        g[ni] = Infinity;
+        closed[ni] = 0;
+      }
       const ng = g[cur] + base * c;
       if (ng < g[ni]) {
         g[ni] = ng;

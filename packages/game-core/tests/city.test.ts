@@ -18,6 +18,7 @@ function freeTile(world: World, cx: number, cy: number): { tx: number; ty: numbe
         const ty = cy + dy;
         if (tileAt(world.map, tx, ty) !== Tile.Grass) continue;
         if (world.buildingAt(tx, ty)) continue;
+        if (world.map.deposits.some((d) => d.tx === tx && d.ty === ty && d.amount > 0)) continue;
         return { tx, ty };
       }
     }

@@ -140,26 +140,55 @@ export function generateMap(seed: number, w = 128, h = 128): GameMap {
       }
   }
 
-  // --- Roads: connect starts pairwise (L paths), bridge over rivers ---
+  // --- Roads: connect starts pairwise (L paths), bridge rivers, carve passes ---
   const roadLine = (x0: number, y0: number, x1: number, y1: number) => {
     let x = x0;
     let y = y0;
     while (x !== x1) {
       const i = at(x, y);
       if (tiles[i] === Tile.River) tiles[i] = Tile.Bridge;
-      else if (tiles[i] !== Tile.Mountain) tiles[i] = Tile.Road;
+      else tiles[i] = Tile.Road; // mountains get carved: no start isolation
       x += Math.sign(x1 - x);
     }
     while (y !== y1) {
       const i = at(x, y);
       if (tiles[i] === Tile.River) tiles[i] = Tile.Bridge;
-      else if (tiles[i] !== Tile.Mountain) tiles[i] = Tile.Road;
+      else tiles[i] = Tile.Road;
       y += Math.sign(y1 - y);
     }
   };
   roadLine(starts[0].tx, starts[0].ty, starts[1].tx, starts[1].ty);
   roadLine(starts[0].tx, starts[0].ty, starts[2].tx, starts[2].ty);
   roadLine(starts[2].tx, starts[2].ty, starts[1].tx, starts[1].ty);
+
+  // --- Connectivity guarantee: every start must be land-reachable from start 0.
+  // Flood-fill; carve an extra L-path for any isolated start (max one extra
+  // pass per start keeps the guarantee cheap and deterministic). ---
+  {
+    const passable = (t: Tile) => t !== Tile.Mountain && t !== Tile.River;
+    for (const s of starts.slice(1)) {
+      const seen = new Uint8Array(w * h);
+      const q = [at(starts[0].tx, starts[0].ty)];
+      seen[q[0]] = 1;
+      let connected = false;
+      while (q.length && !connected) {
+        const cur = q.pop()!;
+        const cx = cur % w;
+        const cy = (cur / w) | 0;
+        if (cx === s.tx && cy === s.ty) { connected = true; break; }
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const ni = ny * w + nx;
+          if (seen[ni] || !passable(tiles[ni] as Tile)) continue;
+          seen[ni] = 1;
+          q.push(ni);
+        }
+      }
+      if (!connected) roadLine(starts[0].tx, starts[0].ty, s.tx, s.ty);
+    }
+  }
 
   // --- Farmland patches (strategic, fight-worthy) ---
   for (let i = 0; i < 10; i++) {

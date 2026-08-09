@@ -12,3 +12,4 @@ export * from './systems/combat';
 export * from './systems/territory';
 export * from './systems/trade';
 export * from './systems/army';
+export * from './systems/ai';

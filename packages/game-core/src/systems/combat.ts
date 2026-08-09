@@ -170,7 +170,7 @@ export class CombatSystem {
   applyDamageBuilding(world: World, b: BuildingState, dmg: number) {
     b.hp -= dmg;
     if (b.hp <= 0) {
-      world.buildings.delete(b.id);
+      world.removeBuilding(b.id);
       world.applyGranaryAuras(b.owner);
       world.recomputePop(b.owner);
       // workers inside drop their build tasks

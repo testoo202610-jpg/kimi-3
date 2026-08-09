@@ -7,8 +7,9 @@ import { CombatSystem } from './systems/combat';
 import { TerritorySystem } from './systems/territory';
 import { TradeSystem } from './systems/trade';
 import { ArmySystem, type ArmyState } from './systems/army';
+import { AISystem } from './systems/ai';
 import {
-  BuildingState, ResTable, buildingDef, canAfford, canPlace, freeAdjacentTile, payCost,
+  BuildingState, ResTable, buildingDef, canAfford, canPlace, footprintTiles, freeAdjacentTile, payCost,
 } from './buildings';
 import { unitDef } from './units';
 
@@ -58,6 +59,8 @@ export interface UnitState {
   carry: { kind: keyof ResTable; amount: number } | null;
   combat: CombatState | null;
   attackMoveResume: Order | null; // attack-move order to resume after a kill
+  pathSeq?: number; // request generation: stale queued callbacks are ignored
+  pathReqAt?: number; // tick of last path request (throttle)
   armyId?: number | null;
   abilityCd?: number; // seconds left (generals)
   // one active buff per unit: until = tick it expires
@@ -90,6 +93,7 @@ export type Command =
   | { type: 'hold'; player: number; unitIds: number[] }
   | { type: 'gather'; player: number; unitIds: number[]; tx: number; ty: number }
   | { type: 'build'; player: number; unitIds: number[]; key: string; tx: number; ty: number }
+  | { type: 'resumeBuild'; player: number; unitIds: number[]; buildingId: number } // assign builders to an existing unbuilt/started site
   | { type: 'train'; player: number; buildingId: number; unitKey: string }
   | { type: 'attack'; player: number; unitIds: number[]; targetUnitId?: number; targetBuildingId?: number }
   | { type: 'formation'; player: number; unitIds: number[]; formation: Formation }
@@ -117,6 +121,7 @@ export class World {
   map: GameMap;
   units = new Map<number, UnitState>();
   buildings = new Map<number, BuildingState>();
+  private buildingTiles = new Map<number, BuildingState>(); // tile idx → building footprint
   players: PlayerState[] = [];
   queue: Command[] = [];
   pathQueue = new PathQueue(16);
@@ -133,6 +138,7 @@ export class World {
   private combat = new CombatSystem();
   private trade = new TradeSystem();
   private army = new ArmySystem();
+  ai = new AISystem();
   territory = new TerritorySystem();
 
   constructor(seed: number, factions: string[], startResources?: Partial<ResTable>);
@@ -191,11 +197,8 @@ export class World {
   }
 
   buildingAt(tx: number, ty: number): BuildingState | null {
-    for (const b of this.buildings.values()) {
-      const d = buildingDef(b.key);
-      if (tx >= b.tx && tx < b.tx + d.w && ty >= b.ty && ty < b.ty + d.h) return b;
-    }
-    return null;
+    // O(1) footprint lookup — gridFor cost() calls this per A* node
+    return this.buildingTiles.get(ty * this.map.w + tx) ?? null;
   }
 
   recomputePop(owner: number) {
@@ -250,10 +253,30 @@ export class World {
       farmBoost: def.farmYield > 0 && !!v.onFarmland,
       queue: [],
     };
+    // construction clears the ground: forest under the footprint is felled
+    for (const t of footprintTiles(key, tx, ty)) {
+      const i = t.ty * this.map.w + t.tx;
+      if (this.map.tiles[i] === Tile.Forest) {
+        this.map.tiles[i] = Tile.Grass;
+        this.map.woodAmount[i] = 0;
+      }
+    }
     this.buildings.set(b.id, b);
+    for (const t of footprintTiles(key, tx, ty)) {
+      this.buildingTiles.set(t.ty * this.map.w + t.tx, b);
+    }
     this.applyGranaryAuras(owner);
     this.recomputePop(owner);
     return b;
+  }
+
+  removeBuilding(id: number) {
+    const b = this.buildings.get(id);
+    if (!b) return;
+    this.buildings.delete(id);
+    for (const t of footprintTiles(b.key, b.tx, b.ty)) {
+      this.buildingTiles.delete(t.ty * this.map.w + t.tx);
+    }
   }
 
   /** Farms within a granary radius get +30% yield (flagged on the farm). */
@@ -275,6 +298,7 @@ export class World {
   private apply(cmd: Command) {
     const player = this.players[cmd.player];
     if (!player) return;
+    if (process.env.CR_DEBUG) console.error('APPLY', this.tickCount, cmd.type, JSON.stringify(cmd).slice(0, 120));
     if (cmd.type === 'setRelation') {
       if (this.players[cmd.target] && cmd.target !== cmd.player) {
         this.diplomacy[cmd.player][cmd.target] = cmd.relation;
@@ -388,6 +412,19 @@ export class World {
       }
       return;
     }
+    if (cmd.type === 'resumeBuild') {
+      const b = this.buildings.get(cmd.buildingId);
+      if (!b || b.owner !== cmd.player || b.built) return;
+      for (const id of cmd.unitIds) {
+        const u = this.units.get(id);
+        if (!u || u.owner !== cmd.player || u.type !== 'worker') continue;
+        const adj = freeAdjacentTile(this, b, Math.floor(u.x / TILE), Math.floor(u.y / TILE));
+        if (!adj) continue;
+        u.task = { kind: 'build', phase: 'goto', tx: adj.tx, ty: adj.ty, buildingId: b.id };
+        this.requestPath(u, adj.tx, adj.ty);
+      }
+      return;
+    }
     if (cmd.type === 'gather') {
       for (const id of cmd.unitIds) {
         const u = this.units.get(id);
@@ -423,8 +460,9 @@ export class World {
       if (!u || u.owner !== cmd.player) continue;
       const ring = n === 0 ? [0, 0] : offsets[n % offsets.length];
       n++;
-      const tx = cmd.tx + ring[0];
-      const ty = cmd.ty + ring[1];
+      const rawTx = cmd.tx + ring[0];
+      const rawTy = cmd.ty + ring[1];
+      const { tx, ty } = this.reachableTarget(rawTx, rawTy, u.owner);
       u.order = { kind, tx, ty };
       u.holdPosition = false;
       u.task = null; // manual move cancels work tasks
@@ -433,15 +471,47 @@ export class World {
     }
   }
 
+  /** A command target may land inside a building/water: snap to the nearest
+   *  reachable tile (ring search) so orders are never silently cancelled. */
+  reachableTarget(tx: number, ty: number, owner: number): { tx: number; ty: number } {
+    const g = this.gridFor(owner);
+    if (g.cost(tx, ty) !== Infinity) return { tx, ty };
+    for (let r = 1; r <= 8; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const x = tx + dx;
+          const y = ty + dy;
+          if (g.cost(x, y) !== Infinity) return { tx: x, ty: y };
+        }
+      }
+    }
+    return { tx, ty }; // totally sealed — requestPath will cancel safely
+  }
+
   requestPath(u: UnitState, tx: number, ty: number) {
     const sx = Math.floor(u.x / TILE);
     const sy = Math.floor(u.y / TILE);
+    if (sx === tx && sy === ty) {
+      // already standing on the target tile: instant arrival, no path
+      // (a 1-node path is never consumed by the movement system — it leaves
+      // a stale path that blocks task processing forever)
+      u.pathSeq = (u.pathSeq ?? 0) + 1; // invalidate any still-queued callback
+      u.order = null;
+      u.path = null;
+      u.pathIdx = 0;
+      return;
+    }
+    // throttle: pursuers of unreachable targets re-request every tick
+    // otherwise — each miss costs a full-map A*. 4 ticks ≈ 250ms, invisible.
+    if (u.pathReqAt != null && this.tickCount - u.pathReqAt < 4) return;
+    u.pathReqAt = this.tickCount;
+    const seq = (u.pathSeq = (u.pathSeq ?? 0) + 1);
     u.order = { kind: 'move', tx, ty }; // task legs are move orders
     this.pathQueue.request(this.gridFor(u.owner), sx, sy, tx, ty, (p) => {
       const unit = this.units.get(u.id);
-      if (!unit) return;
-      if (!p) {
-        // unreachable (water, sealed pocket): cancel the task, go idle
+      if (!unit || unit.pathSeq !== seq) return; // superseded by a newer request
+      if (!p || p.length <= 1) {
+        // unreachable (water, sealed pocket) or degenerate: cancel, go idle
         unit.task = null;
         unit.order = null;
         unit.path = null;
@@ -466,6 +536,7 @@ export class World {
     this.scanAggroSubset();
     this.territory.tick(this);
     this.fog.update(this);
+    this.ai.tick(this);
   }
 
   private aggroCursor = 0;
@@ -541,7 +612,13 @@ export class World {
       w.players[i].recruitBoostUntil = sp.recruitBoostUntil;
     });
     for (const u of s.units) w.units.set(u.id, { ...u, path: null, pathIdx: 0 });
-    for (const b of s.buildings) w.buildings.set(b.id, { ...b, queue: b.queue.map((q) => ({ ...q })) });
+    for (const b of s.buildings) {
+      const copy = { ...b, queue: b.queue.map((q) => ({ ...q })) };
+      w.buildings.set(b.id, copy);
+      for (const t of footprintTiles(b.key, b.tx, b.ty)) {
+        w.buildingTiles.set(t.ty * w.map.w + t.tx, copy);
+      }
+    }
     return w;
   }
 }
