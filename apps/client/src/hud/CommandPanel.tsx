@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react';
-import { BUILDING_DEFS, buildingDef, unitDef } from '@cr/core';
+import { BUILDING_DEFS, GENERALS, buildingDef, unitDef } from '@cr/core';
 import { useHud } from '../store';
 import { bridgeEnqueue, bridgePlayerId, bridgeWorld } from './bridge';
 
@@ -43,6 +43,9 @@ export function CommandPanel() {
 
   const w = bridgeWorld();
   const hasWorker = selection.some((id) => w?.units.get(id)?.type === 'worker');
+  const generals = selection
+    .map((id) => w?.units.get(id))
+    .filter((u): u is NonNullable<typeof u> => u != null && unitDef(u.type).family === 'general');
   const b = selectedBuilding != null ? w?.buildings.get(selectedBuilding) : null;
   const bdef = b ? buildingDef(b.key) : null;
 
@@ -76,6 +79,41 @@ export function CommandPanel() {
         )}
       </div>
       <div style={styles.right}>
+        {!b && info.length > 0 && generals.length > 0 && (
+          <span style={styles.group}>
+            {generals.map((g) => {
+              const gdef = GENERALS[g.type];
+              const armyId = g.armyId;
+              const army = armyId != null ? w?.armies.get(armyId) : null;
+              return (
+                <span key={g.id} style={styles.card}>
+                  <div style={styles.cardName}>{gdef?.name ?? unitDef(g.type).name}</div>
+                  <div style={styles.cardMeta}>
+                    {army ? `${armySupply(army.supply)} supply` : 'no army'}
+                    {g.abilityCd != null && g.abilityCd > 0 ? ` · cd ${Math.ceil(g.abilityCd)}s` : ''}
+                  </div>
+                  <div style={styles.group}>
+                    <button
+                      style={{ ...styles.btn, fontSize: 11, padding: '3px 7px' }}
+                      title="Group selection under this general"
+                      onClick={() => bridgeEnqueue({ type: 'assignArmy', player: bridgePlayerId(), generalId: g.id, unitIds: selection })}
+                    >
+                      Form army
+                    </button>
+                    <button
+                      style={{ ...styles.btn, fontSize: 11, padding: '3px 7px' }}
+                      title={gdef?.ability.desc}
+                      disabled={(g.abilityCd ?? 0) > 0 || army == null}
+                      onClick={() => bridgeEnqueue({ type: 'ability', player: bridgePlayerId(), generalId: g.id })}
+                    >
+                      {gdef?.ability.key ?? 'ability'}
+                    </button>
+                  </div>
+                </span>
+              );
+            })}
+          </span>
+        )}
         {!b && info.length > 0 && (
           <span style={styles.group}>
             {(['loose', 'line', 'wedge', 'square'] as const).map((f) => (
@@ -134,6 +172,10 @@ function costText(cost: Record<string, number | undefined>): string {
     .filter(([, v]) => v)
     .map(([k, v]) => `${v} ${k}`)
     .join(', ');
+}
+
+function armySupply(s: number): string {
+  return `⛺ ${Math.round(s)}%`;
 }
 
 const styles: Record<string, CSSProperties> = {

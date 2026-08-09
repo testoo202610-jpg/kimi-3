@@ -13,7 +13,7 @@ Each phase ends with: tests green, `typecheck` green, `lint` green,
       formations (line/wedge/square/loose).
 - [x] Phase 4 — City & economy: city zones, market, gold, trade routes,
       territory projection, era upgrades, wall/gate/tower.
-- [ ] Phase 5 — Strategic: generals, armies, abilities, supply system,
+- [x] Phase 5 — Strategic: generals, armies, abilities, supply system,
       diplomacy, city capture by occupation.
 - [ ] Phase 6 — AI: economy/expansion/military planners, faction personas,
       difficulty tiers, anti-cheat audit test (Hard AI gains no free stuff).

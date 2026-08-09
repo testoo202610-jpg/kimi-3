@@ -124,6 +124,8 @@ export interface BuildingState {
   queue: { unitKey: string; remaining: number; total: number }[];
   atkCd?: number; // tower swing cooldown (seconds)
   tradeCd?: number; // caravan spawn timer (markets)
+  captureProgress?: number; // seconds a captor has held the control zone
+  captureOwner?: number; // player currently occupying (may flip ownership)
 }
 
 export interface PlacementResult {

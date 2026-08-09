@@ -1,5 +1,6 @@
 import { TILE } from '../map';
 import { unitDef } from '../units';
+import { armorOf, dmgMultOf } from './army';
 import { buildingDef, buildingCenter, freeAdjacentTile, type BuildingState } from '../buildings';
 import type { World, UnitState } from '../world';
 
@@ -116,12 +117,12 @@ export class CombatSystem {
       if (combat.cooldown <= 0) {
         combat.cooldown = ATTACK_COOLDOWN;
         const moraleFactor = 0.6 + (u.morale / 100) * 0.4;
-        let dmg = def.attack * moraleFactor;
+        let dmg = def.attack * moraleFactor * dmgMultOf(u, world.tickCount);
 
         if (target) {
           const tdef = unitDef(target.type);
           if (def.counters.includes(tdef.family)) dmg *= def.counterBonus;
-          dmg = Math.max(1, dmg - tdef.armor);
+          dmg = Math.max(1, dmg - armorOf(target, world.tickCount));
           if (def.range > 1) this.fireProjectile(u, { unitId: target.id }, dmg);
           else this.applyDamage(world, u, target, dmg);
         } else if (targetBuilding) {
@@ -155,10 +156,13 @@ export class CombatSystem {
       world.units.delete(target.id);
       world.recomputePop(target.owner);
       attacker.morale = Math.min(100, attacker.morale + KILL_MORALE_DELTA);
+      const isGeneral = unitDef(target.type).family === 'general';
+      const radius = isGeneral ? 12 * TILE : CASUALTY_RADIUS;
+      const loss = isGeneral ? 25 : CASUALTY_MORALE_LOSS;
       for (const ally of world.units.values()) {
         if (ally.owner !== target.owner) continue;
         const d = Math.hypot(ally.x - target.x, ally.y - target.y);
-        if (d <= CASUALTY_RADIUS) ally.morale = Math.max(0, ally.morale - CASUALTY_MORALE_LOSS);
+        if (d <= radius) ally.morale = Math.max(0, ally.morale - loss);
       }
     }
   }
@@ -213,10 +217,13 @@ export class CombatSystem {
             world.units.delete(targetUnit.id);
             world.recomputePop(targetUnit.owner);
             if (attacker) attacker.morale = Math.min(100, attacker.morale + KILL_MORALE_DELTA);
+            const victimIsGeneral = unitDef(targetUnit.type).family === 'general';
+            const radius = victimIsGeneral ? 12 * TILE : CASUALTY_RADIUS;
+            const loss = victimIsGeneral ? 25 : CASUALTY_MORALE_LOSS;
             for (const ally of world.units.values()) {
               if (ally.owner !== targetUnit.owner) continue;
               const d = Math.hypot(ally.x - targetUnit.x, ally.y - targetUnit.y);
-              if (d <= CASUALTY_RADIUS) ally.morale = Math.max(0, ally.morale - CASUALTY_MORALE_LOSS);
+              if (d <= radius) ally.morale = Math.max(0, ally.morale - loss);
             }
           }
           if (attacker?.combat?.awaitingProjectile) attacker.combat.awaitingProjectile--;

@@ -98,6 +98,37 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     hp: 50, attack: 0, armor: 0, range: 1, speed: 4.2, vision: 6,
     morale: 30, trainTime: 0, cost: {}, pop: 0, counters: [], counterBonus: 1,
   },
+  // generals (named heroes — strategy stats live in generals.ts)
+  genPeiShang: {
+    key: 'genPeiShang', name: 'Pei Shang, Ash Duke', family: 'general',
+    hp: 320, attack: 18, armor: 4, range: 1, speed: 4.0, vision: 9,
+    morale: 95, trainTime: 0, cost: {}, pop: 0, counters: [], counterBonus: 1,
+  },
+  genWusunYara: {
+    key: 'genWusunYara', name: 'Lady Wusun Yara', family: 'general',
+    hp: 260, attack: 12, armor: 3, range: 2, speed: 4.2, vision: 10,
+    morale: 95, trainTime: 0, cost: {}, pop: 0, counters: [], counterBonus: 1,
+  },
+  genGueMoyu: {
+    key: 'genGueMoyu', name: 'Admiral Gué Moyu', family: 'general',
+    hp: 280, attack: 14, armor: 3, range: 3, speed: 3.8, vision: 10,
+    morale: 95, trainTime: 0, cost: {}, pop: 0, counters: [], counterBonus: 1,
+  },
+  genFenRuohai: {
+    key: 'genFenRuohai', name: 'Chancellor Fen Ruohai', family: 'general',
+    hp: 220, attack: 8, armor: 2, range: 1, speed: 3.5, vision: 9,
+    morale: 95, trainTime: 0, cost: {}, pop: 0, counters: [], counterBonus: 1,
+  },
+  genTogan: {
+    key: 'genTogan', name: 'Marshal Togan Stone-brow', family: 'general',
+    hp: 340, attack: 17, armor: 5, range: 1, speed: 3.6, vision: 9,
+    morale: 95, trainTime: 0, cost: {}, pop: 0, counters: [], counterBonus: 1,
+  },
+  genBaQiren: {
+    key: 'genBaQiren', name: 'Sage-General Ba Qiren', family: 'general',
+    hp: 240, attack: 11, armor: 3, range: 2, speed: 3.6, vision: 10,
+    morale: 95, trainTime: 0, cost: {}, pop: 0, counters: [], counterBonus: 1,
+  },
 };
 
 export function unitDef(key: string): UnitDef {

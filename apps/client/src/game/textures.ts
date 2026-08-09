@@ -81,6 +81,14 @@ export function generateTextures(scene: Phaser.Scene) {
   g.generateTexture('unit-caravan', 28, 24);
   g.clear();
 
+  // general: broad figure + banner pole + gold star
+  g.fillStyle(0xffffff, 1).fillRect(6, 8, 12, 16);
+  g.fillRect(3, 6, 3, 20);
+  g.fillTriangle(6, 6, 16, 8, 6, 12);
+  g.fillStyle(0xffd860, 1).fillCircle(12, 4, 3);
+  g.generateTexture('unit-general', 28, 28);
+  g.clear();
+
   // generic fallback dot
   g.fillStyle(0xffffff, 1).fillCircle(10, 10, 8);
   g.generateTexture('unit-default', 20, 20);
@@ -147,4 +155,10 @@ export const UNIT_TEXTURE: Record<string, string> = {
   batteringRam: 'unit-batteringRam',
   catapult: 'unit-catapult',
   caravan: 'unit-caravan',
+  genPeiShang: 'unit-general',
+  genWusunYara: 'unit-general',
+  genGueMoyu: 'unit-general',
+  genFenRuohai: 'unit-general',
+  genTogan: 'unit-general',
+  genBaQiren: 'unit-general',
 };

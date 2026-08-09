@@ -1,11 +1,16 @@
-import { GameMap, Tile, tileAt } from '../map';
+import { GameMap, TILE, Tile, tileAt } from '../map';
 import { buildingDef } from '../buildings';
+import { unitDef } from '../units';
 import type { World } from '../world';
 
 const RECOMPUTE_EVERY = 8; // ticks (0.5 s at 16 Hz)
 const BASE_RADIUS = 10;
 const ERA_RADIUS = 4; // per era
 const TAX_PER_TILE = 0.0012; // gold/sec per controlled tile
+const CAPTURE_RADIUS = 6 * TILE; // control zone around a town center
+const CAPTURE_SECONDS = 20; // uncontested hold time to flip ownership
+const MILITARY = new Set(['infantry', 'archer', 'cavalry', 'siege', 'general']);
+const unitFamily = (type: string) => unitDef(type).family;
 
 /** Territory grid per player: BFS influence from town centers.
  *  Effects elsewhere: supply safety (Phase 5), capture (Phase 5), tax income here. */
@@ -24,7 +29,8 @@ export class TerritorySystem {
     return g[ty * world.map.w + tx] === 1;
   }
 
-  tick(world: World) {
+  tick(world: World, dtMs = 62.5) {
+    this.tickCapture(world, dtMs / 1000);
     if (world.tickCount % RECOMPUTE_EVERY !== 0) return;
     this.compute(world);
     // tax income: gold trickle scaled by territory size
@@ -34,6 +40,52 @@ export class TerritorySystem {
       let tiles = 0;
       for (let i = 0; i < g.length; i++) tiles += g[i];
       p.res.gold += tiles * TAX_PER_TILE * RECOMPUTE_EVERY / 16;
+    }
+  }
+
+  /** City capture by occupation: hostile military holds the control zone of a
+   *  town center for CAPTURE_SECONDS with no defenders present → flips owner. */
+  private tickCapture(world: World, dt: number) {
+    for (const b of world.buildings.values()) {
+      if (!b.built || !buildingDef(b.key).projectsTerritory) continue;
+      const cx = (b.tx + buildingDef(b.key).w / 2) * TILE;
+      const cy = (b.ty + buildingDef(b.key).h / 2) * TILE;
+      // count occupiers vs defenders inside the control zone
+      let defenders = 0;
+      const occupiers = new Map<number, number>();
+      for (const u of world.units.values()) {
+        if (!MILITARY.has(unitFamily(u.type))) continue;
+        if (Math.abs(u.x - cx) > CAPTURE_RADIUS || Math.abs(u.y - cy) > CAPTURE_RADIUS) continue;
+        if (world.friendly(u.owner, b.owner)) defenders++;
+        else occupiers.set(u.owner, (occupiers.get(u.owner) ?? 0) + 1);
+      }
+      // find a dominant captor: any hostile player with units and no defenders
+      let captor: number | null = null;
+      if (defenders === 0) {
+        for (const [pid, n] of occupiers) {
+          if (n >= 1 && (captor === null || n > (occupiers.get(captor) ?? 0))) captor = pid;
+        }
+      }
+      if (captor === null) {
+        b.captureProgress = 0;
+        b.captureOwner = undefined;
+        continue;
+      }
+      if (b.captureOwner !== captor) {
+        b.captureOwner = captor;
+        b.captureProgress = 0;
+      }
+      b.captureProgress = (b.captureProgress ?? 0) + dt;
+      if (b.captureProgress >= CAPTURE_SECONDS) {
+        const prevOwner = b.owner;
+        b.owner = captor;
+        b.captureProgress = 0;
+        b.captureOwner = undefined;
+        world.applyGranaryAuras(prevOwner);
+        world.applyGranaryAuras(captor);
+        world.recomputePop(prevOwner);
+        world.recomputePop(captor);
+      }
     }
   }
 

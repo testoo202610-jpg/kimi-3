@@ -54,10 +54,11 @@ export class EconomySystem {
       world.players[b.owner].res.food += def.farmYield * mult * dt;
     }
 
-    // training
+    // training (Rapid Recruitment doubles progress while active)
     const item = b.queue[0];
     if (item) {
-      item.remaining -= dt;
+      const boost = (world.players[b.owner].recruitBoostUntil ?? 0) > world.tickCount ? 2 : 1;
+      item.remaining -= dt * boost;
       if (item.remaining <= 0) {
         b.queue.shift();
         const udef = unitDef(item.unitKey);

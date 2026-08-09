@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import {
-  BUILDING_DEFS, TILE, TICK_MS, Tile, World, buildingDef, canPlace, isBlocked, tileAt, unitDef,
+  BUILDING_DEFS, GENERALS_BY_LEAN, TILE, TICK_MS, Tile, World, buildingDef, canPlace, isBlocked, tileAt, unitDef,
   type BuildingState, type UnitState,
 } from '@cr/core';
 import { FACTION_BY_ID, type FactionId } from '@cr/shared';
@@ -78,6 +78,13 @@ export class WorldScene extends Phaser.Scene {
         for (let i = 0; i < 40; i++) {
           const t = scatter(s.tx + 3, s.ty + 1, i);
           if (this.world.spawnUnit(p, type, t.tx, t.ty)) break;
+        }
+      }
+      // generals: two named heroes per faction start beside the town center
+      for (const gkey of GENERALS_BY_LEAN[OWNER_FACTION[p]] ?? []) {
+        for (let i = 0; i < 40; i++) {
+          const t = scatter(s.tx + 2, s.ty + 3, i);
+          if (this.world.spawnUnit(p, gkey, t.tx, t.ty)) break;
         }
       }
     }

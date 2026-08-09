@@ -1,5 +1,6 @@
 import { TILE, moveCost, tileAt } from '../map';
 import { unitDef } from '../units';
+import { speedMultOf } from './army';
 import type { World, UnitState } from '../world';
 
 const UNIT_RADIUS = 10; // px, soft body separation
@@ -26,7 +27,8 @@ export class MovementSystem {
       const tx = Math.floor(u.x / TILE);
       const ty = Math.floor(u.y / TILE);
       const terrainCost = moveCost(tileAt(world.map, tx, ty));
-      const speed = (def.speed * TILE) / (terrainCost === Infinity ? 1 : terrainCost);
+      const speed = ((def.speed * speedMultOf(u, world.tickCount)) * TILE) / (terrainCost === Infinity ? 1 : terrainCost);
+      if (speed <= 0) continue; // immobilized (defensive formation)
 
       const wx = wp.tx * TILE + TILE / 2;
       const wy = wp.ty * TILE + TILE / 2;

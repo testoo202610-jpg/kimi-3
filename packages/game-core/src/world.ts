@@ -6,6 +6,7 @@ import { EconomySystem } from './systems/economy';
 import { CombatSystem } from './systems/combat';
 import { TerritorySystem } from './systems/territory';
 import { TradeSystem } from './systems/trade';
+import { ArmySystem, type ArmyState } from './systems/army';
 import {
   BuildingState, ResTable, buildingDef, canAfford, canPlace, freeAdjacentTile, payCost,
 } from './buildings';
@@ -57,6 +58,15 @@ export interface UnitState {
   carry: { kind: keyof ResTable; amount: number } | null;
   combat: CombatState | null;
   attackMoveResume: Order | null; // attack-move order to resume after a kill
+  armyId?: number | null;
+  abilityCd?: number; // seconds left (generals)
+  // one active buff per unit: until = tick it expires
+  buffUntil?: number;
+  buffSpeedMult?: number;
+  buffDmgMult?: number;
+  buffArmorAdd?: number;
+  supplyMult?: number; // supply penalty (ArmySystem, per tick)
+  auraDmg?: number; // general aura damage multiplier (recomputed per tick)
 }
 
 export interface PlayerState {
@@ -68,7 +78,10 @@ export interface PlayerState {
   popCap: number;
   starving: boolean;
   era: number; // 0 Settlement → 1 City → 2 Kingdom → 3 Imperial
+  recruitBoostUntil?: number; // tick when Rapid Recruitment expires
 }
+
+export type Relation = 'ally' | 'hostile';
 
 export type Command =
   | { type: 'move'; player: number; unitIds: number[]; tx: number; ty: number }
@@ -80,7 +93,10 @@ export type Command =
   | { type: 'train'; player: number; buildingId: number; unitKey: string }
   | { type: 'attack'; player: number; unitIds: number[]; targetUnitId?: number; targetBuildingId?: number }
   | { type: 'formation'; player: number; unitIds: number[]; formation: Formation }
-  | { type: 'researchEra'; player: number };
+  | { type: 'researchEra'; player: number }
+  | { type: 'assignArmy'; player: number; generalId: number; unitIds: number[] }
+  | { type: 'ability'; player: number; generalId: number }
+  | { type: 'setRelation'; player: number; target: number; relation: Relation };
 
 export const ERA_NAMES = ['Settlement', 'City', 'Kingdom', 'Imperial'] as const;
 export const ERA_COSTS: Partial<ResTable>[] = [
@@ -108,11 +124,15 @@ export class World {
   nextBuildingId = 1;
   tickCount = 0;
   playerFormation: Formation[] = [];
+  armies = new Map<number, ArmyState>();
+  nextArmyId = 1;
+  diplomacy: Relation[][] = []; // symmetric relation matrix
   private movement = new MovementSystem();
   private fog = new FogSystem();
   private economy = new EconomySystem();
   private combat = new CombatSystem();
   private trade = new TradeSystem();
+  private army = new ArmySystem();
   territory = new TerritorySystem();
 
   constructor(seed: number, factions: string[], startResources?: Partial<ResTable>);
@@ -133,13 +153,16 @@ export class World {
       });
       this.playerFormation.push('loose');
     });
+    const n = this.players.length;
+    this.diplomacy = Array.from({ length: n }, (_, a) =>
+      Array.from({ length: n }, (_, b) => (a === b ? 'ally' as Relation : 'hostile' as Relation)),
+    );
     this.territory.init(this);
   }
 
-  /** Two players are enemies unless allies; Phase 5 diplomacy fills the real
-   *  relation matrix — for now every other player is hostile. */
+  /** Allies are never targeted; hostiles are fair game. */
   friendly(a: number, b: number): boolean {
-    return a === b;
+    return a === b || this.diplomacy[a]?.[b] === 'ally';
   }
 
   /** Pathing grid for a given owner: own gates are open, enemy buildings block. */
@@ -252,6 +275,37 @@ export class World {
   private apply(cmd: Command) {
     const player = this.players[cmd.player];
     if (!player) return;
+    if (cmd.type === 'setRelation') {
+      if (this.players[cmd.target] && cmd.target !== cmd.player) {
+        this.diplomacy[cmd.player][cmd.target] = cmd.relation;
+        this.diplomacy[cmd.target][cmd.player] = cmd.relation;
+      }
+      return;
+    }
+    if (cmd.type === 'assignArmy') {
+      const gen = this.units.get(cmd.generalId);
+      if (!gen || gen.owner !== cmd.player || unitDef(gen.type).family !== 'general') return;
+      let army = [...this.armies.values()].find((a) => a.owner === cmd.player && a.generalId === gen.id);
+      if (!army) {
+        army = { id: this.nextArmyId++, owner: cmd.player, generalId: gen.id, supply: 100 };
+        this.armies.set(army.id, army);
+      }
+      for (const id of cmd.unitIds) {
+        const u = this.units.get(id);
+        if (!u || u.owner !== cmd.player) continue;
+        if (unitDef(u.type).family === 'worker' || unitDef(u.type).family === 'civil') continue;
+        u.armyId = army.id;
+      }
+      gen.armyId = army.id;
+      return;
+    }
+    if (cmd.type === 'ability') {
+      const gen = this.units.get(cmd.generalId);
+      if (!gen || gen.owner !== cmd.player || unitDef(gen.type).family !== 'general') return;
+      if ((gen.abilityCd ?? 0) > 0) return;
+      this.army.applyAbility(this, gen);
+      return;
+    }
     if (cmd.type === 'stop') {
       for (const id of cmd.unitIds) {
         const u = this.units.get(id);
@@ -273,6 +327,8 @@ export class World {
       const tgtU = cmd.targetUnitId != null ? this.units.get(cmd.targetUnitId) : null;
       const tgtB = cmd.targetBuildingId != null ? this.buildings.get(cmd.targetBuildingId) : null;
       if (!tgtU && !tgtB) return;
+      if (tgtU && this.friendly(tgtU.owner, cmd.player)) return;
+      if (tgtB && this.friendly(tgtB.owner, cmd.player)) return;
       for (const id of cmd.unitIds) {
         const u = this.units.get(id);
         if (!u || u.owner !== cmd.player) continue;
@@ -406,6 +462,7 @@ export class World {
     this.economy.tick(this, dtMs);
     this.trade.tick(this, dtMs);
     this.combat.tick(this, dtMs);
+    this.army.tick(this, dtMs);
     this.scanAggroSubset();
     this.territory.tick(this);
     this.fog.update(this);
@@ -449,11 +506,15 @@ export class World {
       tick: this.tickCount,
       nextUnitId: this.nextUnitId,
       nextBuildingId: this.nextBuildingId,
+      nextArmyId: this.nextArmyId,
       units: [...this.units.values()].map((u) => ({ ...u, path: null })),
       buildings: [...this.buildings.values()],
       players: this.players.map((p) => ({
         id: p.id, res: p.res, popUsed: p.popUsed, popCap: p.popCap, starving: p.starving, era: p.era,
+        recruitBoostUntil: p.recruitBoostUntil,
       })),
+      armies: [...this.armies.values()],
+      diplomacy: this.diplomacy.map((row) => [...row]),
       deposits: this.map.deposits.map((d) => ({ ...d })),
       woodAmount: [...this.map.woodAmount],
     };
@@ -468,12 +529,16 @@ export class World {
     w.tickCount = s.tick;
     w.nextUnitId = s.nextUnitId;
     w.nextBuildingId = s.nextBuildingId;
+    w.nextArmyId = s.nextArmyId ?? 0;
+    if (s.armies) for (const a of s.armies) w.armies.set(a.id, { ...a });
+    if (s.diplomacy) w.diplomacy = s.diplomacy.map((row) => [...row]);
     s.players.forEach((sp, i) => {
       Object.assign(w.players[i].res, sp.res);
       w.players[i].popUsed = sp.popUsed;
       w.players[i].popCap = sp.popCap;
       w.players[i].starving = sp.starving;
       w.players[i].era = sp.era ?? 0;
+      w.players[i].recruitBoostUntil = sp.recruitBoostUntil;
     });
     for (const u of s.units) w.units.set(u.id, { ...u, path: null, pathIdx: 0 });
     for (const b of s.buildings) w.buildings.set(b.id, { ...b, queue: b.queue.map((q) => ({ ...q })) });
@@ -487,9 +552,12 @@ export interface SerializedWorld {
   tick: number;
   nextUnitId: number;
   nextBuildingId: number;
+  nextArmyId?: number;
   units: UnitState[];
   buildings: BuildingState[];
-  players: { id: number; res: ResTable; popUsed: number; popCap: number; starving: boolean; era?: number }[];
+  players: { id: number; res: ResTable; popUsed: number; popCap: number; starving: boolean; era?: number; recruitBoostUntil?: number }[];
+  armies?: ArmyState[];
+  diplomacy?: Relation[][];
   deposits: { id: number; amount: number }[];
   woodAmount: number[];
 }
