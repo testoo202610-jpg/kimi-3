@@ -15,6 +15,7 @@ export function CommandPanel() {
   const selection = useHud((s) => s.selection);
   const selectedBuilding = useHud((s) => s.selectedBuilding);
   const buildKey = useHud((s) => s.buildKey);
+  const era = useHud((s) => s.era);
   useHud((s) => s.res); // subscribe: refresh train queue/progress display 4 Hz
   const [info, setInfo] = useState<SelInfo[]>([]);
 
@@ -90,20 +91,26 @@ export function CommandPanel() {
             ))}
           </span>
         )}
-        {b && bdef?.trains.map((u) => (
-          <TrainButton key={u} buildingId={b.id} unitKey={u} />
-        ))}
-        {hasWorker &&
-          Object.values(BUILDING_DEFS).map((d) => (
-            <button
-              key={d.key}
-              style={{ ...styles.btn, ...(buildKey === d.key ? styles.btnActive : {}) }}
-              title={costText(d.cost)}
-              onClick={() => useHud.getState().setBuildKey(buildKey === d.key ? null : d.key)}
-            >
-              {d.name}
-            </button>
+        {b && bdef?.trains
+          .filter((u) => (unitDef(u).minEra ?? 0) <= era)
+          .map((u) => (
+            <TrainButton key={u} buildingId={b.id} unitKey={u} />
           ))}
+        {hasWorker &&
+          Object.values(BUILDING_DEFS).map((d) => {
+            const locked = (d.minEra ?? 0) > era;
+            return (
+              <button
+                key={d.key}
+                style={{ ...styles.btn, ...(buildKey === d.key ? styles.btnActive : {}), ...(locked ? styles.btnLocked : {}) }}
+                title={locked ? `requires era ${d.minEra} · ${costText(d.cost)}` : costText(d.cost)}
+                disabled={locked}
+                onClick={() => useHud.getState().setBuildKey(buildKey === d.key ? null : d.key)}
+              >
+                {d.name}{locked ? ' 🔒' : ''}
+              </button>
+            );
+          })}
       </div>
     </div>
   );
@@ -170,4 +177,5 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
   },
   btnActive: { background: '#6a5228', borderColor: '#d8b13a', color: '#ffe9a8' },
+  btnLocked: { opacity: 0.45, cursor: 'default' },
 };

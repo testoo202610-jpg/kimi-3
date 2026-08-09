@@ -8,3 +8,5 @@ export * from './systems/movement';
 export * from './systems/fog';
 export * from './systems/economy';
 export * from './systems/combat';
+export * from './systems/territory';
+export * from './systems/trade';

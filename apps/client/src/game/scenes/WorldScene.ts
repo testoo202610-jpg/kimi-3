@@ -45,6 +45,7 @@ export class WorldScene extends Phaser.Scene {
   private simAcc = 0;
   private fogBlack!: Phaser.GameObjects.RenderTexture;
   private fogGray!: Phaser.GameObjects.Graphics;
+  private terrLayer!: Phaser.GameObjects.Graphics;
   private dragRect!: Phaser.GameObjects.Graphics;
   private dragStart: { x: number; y: number } | null = null;
   private dragging = false;
@@ -175,10 +176,24 @@ export class WorldScene extends Phaser.Scene {
 
   private buildFogLayers() {
     const { w, h } = this.world.map;
+    this.terrLayer = this.add.graphics().setDepth(5);
     this.fogBlack = this.add.renderTexture(0, 0, w * TILE, h * TILE).setOrigin(0).setDepth(8000);
     this.fogBlack.fill(0x000000, 1);
     this.fogGray = this.add.graphics().setDepth(7900);
     this.updateFog();
+  }
+
+  /** Territory tint: own land washed faintly in the faction color. */
+  private updateTerritory() {
+    const { w, h } = this.world.map;
+    const grid = this.world.territory.grids[this.playerId];
+    if (!grid) return;
+    this.terrLayer.clear();
+    this.terrLayer.fillStyle(FACTION_BY_ID[this.factionId].color, 0.07);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        if (grid[y * w + x] === 1) this.terrLayer.fillRect(x * TILE, y * TILE, TILE, TILE);
+      }
   }
 
   private updateFog() {
@@ -503,6 +518,7 @@ export class WorldScene extends Phaser.Scene {
     if (fog.dirty) {
       fog.dirty = false;
       this.updateFog();
+      this.updateTerritory();
     }
 
     this.hudTimer += delta;
@@ -512,7 +528,7 @@ export class WorldScene extends Phaser.Scene {
       const alive = [...this.selected].filter((id) => this.world.units.has(id));
       if (alive.length !== this.selected.size) this.setSelected(alive);
       const pl = this.world.players[this.playerId];
-      useHud.getState().setEconomy({ ...pl.res }, pl.popUsed, pl.popCap, pl.starving);
+      useHud.getState().setEconomy({ ...pl.res }, pl.popUsed, pl.popCap, pl.starving, pl.era);
     }
   }
 

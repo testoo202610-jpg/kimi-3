@@ -1,6 +1,6 @@
 // Unit definitions — data-driven registry. All stats fully original work.
 
-export type UnitFamily = 'worker' | 'infantry' | 'archer' | 'cavalry' | 'siege' | 'naval' | 'general';
+export type UnitFamily = 'worker' | 'infantry' | 'archer' | 'cavalry' | 'siege' | 'naval' | 'general' | 'civil';
 
 export interface UnitDef {
   key: string;
@@ -18,6 +18,7 @@ export interface UnitDef {
   pop: number;
   counters: UnitFamily[]; // families this unit hits for bonus damage
   counterBonus: number; // damage multiplier vs listed families
+  minEra?: number; // era required to train (default 0)
 }
 
 export const UNIT_DEFS: Record<string, UnitDef> = {
@@ -41,13 +42,13 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     key: 'swordsman', name: 'Swordsman', family: 'infantry',
     hp: 85, attack: 10, armor: 2, range: 1, speed: 3.4, vision: 7,
     morale: 65, trainTime: 14, cost: { food: 50, iron: 10, gold: 25 }, pop: 1,
-    counters: ['infantry'], counterBonus: 1.4,
+    counters: ['infantry'], counterBonus: 1.4, minEra: 1,
   },
   heavyInfantry: {
     key: 'heavyInfantry', name: 'Heavy Infantry', family: 'infantry',
     hp: 130, attack: 12, armor: 4, range: 1, speed: 2.7, vision: 7,
     morale: 75, trainTime: 20, cost: { food: 60, iron: 30, gold: 40 }, pop: 2,
-    counters: ['infantry'], counterBonus: 1.5,
+    counters: ['infantry'], counterBonus: 1.5, minEra: 2,
   },
   archer: {
     key: 'archer', name: 'Archer', family: 'archer',
@@ -59,7 +60,7 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     key: 'crossbowman', name: 'Crossbowman', family: 'archer',
     hp: 55, attack: 11, armor: 1, range: 7, speed: 3.0, vision: 8,
     morale: 60, trainTime: 16, cost: { food: 45, wood: 20, iron: 15, gold: 30 }, pop: 1,
-    counters: ['infantry', 'cavalry'], counterBonus: 1.5,
+    counters: ['infantry', 'cavalry'], counterBonus: 1.5, minEra: 1,
   },
   scoutCavalry: {
     key: 'scoutCavalry', name: 'Scout Cavalry', family: 'cavalry',
@@ -77,19 +78,25 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     key: 'heavyCavalry', name: 'Heavy Cavalry', family: 'cavalry',
     hp: 130, attack: 13, armor: 3, range: 1, speed: 4.6, vision: 8,
     morale: 75, trainTime: 24, cost: { food: 90, iron: 25, gold: 55, horses: 2 }, pop: 2,
-    counters: ['archer', 'siege'], counterBonus: 1.8,
+    counters: ['archer', 'siege'], counterBonus: 1.8, minEra: 2,
   },
   batteringRam: {
     key: 'batteringRam', name: 'Battering Ram', family: 'siege',
     hp: 180, attack: 40, armor: 2, range: 1, speed: 1.6, vision: 5,
     morale: 50, trainTime: 30, cost: { wood: 120, iron: 20, gold: 40 }, pop: 3,
     counters: ['siege' as UnitFamily], counterBonus: 1, // buildings handled via armor-type bonus (Phase 3)
+    minEra: 1,
   },
   catapult: {
     key: 'catapult', name: 'Catapult', family: 'siege',
     hp: 90, attack: 30, armor: 0, range: 9, speed: 1.4, vision: 6,
     morale: 45, trainTime: 35, cost: { wood: 100, stone: 60, gold: 60 }, pop: 3,
-    counters: [], counterBonus: 1,
+    counters: [], counterBonus: 1, minEra: 2,
+  },
+  caravan: {
+    key: 'caravan', name: 'Trade Caravan', family: 'civil',
+    hp: 50, attack: 0, armor: 0, range: 1, speed: 4.2, vision: 6,
+    morale: 30, trainTime: 0, cost: {}, pop: 0, counters: [], counterBonus: 1,
   },
 };
 

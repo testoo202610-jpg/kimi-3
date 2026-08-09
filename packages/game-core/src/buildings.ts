@@ -24,6 +24,12 @@ export interface BuildingDef {
   farmYield: number; // food/sec if farm
   terrain: 'any' | 'farmland';
   radius: number; // aura radius (granary), 0 = none
+  minEra?: number; // era required to build (default 0)
+  atk?: number; // attack per swing (towers)
+  rangeT?: number; // attack range in tiles (towers)
+  visionT?: number; // vision radius in tiles (towers)
+  projectsTerritory?: boolean; // extends faction territory (town center)
+  goldPerSec?: number; // passive income (market)
 }
 
 export const BUILDING_DEFS: Record<string, BuildingDef> = {
@@ -31,6 +37,7 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
     key: 'townCenter', name: 'Town Center', w: 3, h: 3, hp: 1400, buildTime: 30,
     cost: { wood: 250, stone: 100, gold: 100 }, popCap: 10,
     dropoff: ['food', 'wood', 'stone', 'iron', 'gold'], trains: ['worker'], farmYield: 0, terrain: 'any', radius: 0,
+    projectsTerritory: true,
   },
   house: {
     key: 'house', name: 'House', w: 2, h: 2, hp: 300, buildTime: 8,
@@ -63,6 +70,22 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
   watchtower: {
     key: 'watchtower', name: 'Watchtower', w: 1, h: 1, hp: 450, buildTime: 14,
     cost: { stone: 80, wood: 20 }, popCap: 0, dropoff: [], trains: [], farmYield: 0, terrain: 'any', radius: 0,
+    minEra: 1, atk: 8, rangeT: 6, visionT: 9,
+  },
+  wall: {
+    key: 'wall', name: 'Wall', w: 1, h: 1, hp: 700, buildTime: 4,
+    cost: { stone: 10 }, popCap: 0, dropoff: [], trains: [], farmYield: 0, terrain: 'any', radius: 0,
+    minEra: 1,
+  },
+  gate: {
+    key: 'gate', name: 'Gate', w: 1, h: 1, hp: 500, buildTime: 6,
+    cost: { wood: 30, stone: 15 }, popCap: 0, dropoff: [], trains: [], farmYield: 0, terrain: 'any', radius: 0,
+    minEra: 1,
+  },
+  market: {
+    key: 'market', name: 'Market', w: 2, h: 2, hp: 600, buildTime: 14,
+    cost: { wood: 100, gold: 25 }, popCap: 0, dropoff: [], trains: [], farmYield: 0, terrain: 'any', radius: 0,
+    minEra: 1, goldPerSec: 0.6,
   },
   barracks: {
     key: 'barracks', name: 'Barracks', w: 3, h: 2, hp: 700, buildTime: 18,
@@ -99,6 +122,8 @@ export interface BuildingState {
   farmFarmland: boolean; // placed on fertile tiles
   farmBoost: boolean; // granary aura applied or on farmland
   queue: { unitKey: string; remaining: number; total: number }[];
+  atkCd?: number; // tower swing cooldown (seconds)
+  tradeCd?: number; // caravan spawn timer (markets)
 }
 
 export interface PlacementResult {

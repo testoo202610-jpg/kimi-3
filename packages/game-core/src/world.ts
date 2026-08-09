@@ -4,6 +4,8 @@ import { MovementSystem } from './systems/movement';
 import { FogSystem, FogState } from './systems/fog';
 import { EconomySystem } from './systems/economy';
 import { CombatSystem } from './systems/combat';
+import { TerritorySystem } from './systems/territory';
+import { TradeSystem } from './systems/trade';
 import {
   BuildingState, ResTable, buildingDef, canAfford, canPlace, freeAdjacentTile, payCost,
 } from './buildings';
@@ -30,12 +32,13 @@ export interface CombatState {
 export type Formation = 'loose' | 'line' | 'wedge' | 'square';
 
 export interface UnitTask {
-  kind: 'gather' | 'build';
+  kind: 'gather' | 'build' | 'trade';
   phase: TaskPhase;
   tx: number; // primary target (resource tile / building tile)
   ty: number;
   depositId?: number; // for gather from discrete deposits
-  buildingId?: number; // for build / delivery
+  buildingId?: number; // for build / delivery / destination market
+  homeId?: number; // trade: home market
 }
 
 export interface UnitState {
@@ -64,6 +67,7 @@ export interface PlayerState {
   popUsed: number;
   popCap: number;
   starving: boolean;
+  era: number; // 0 Settlement → 1 City → 2 Kingdom → 3 Imperial
 }
 
 export type Command =
@@ -75,7 +79,15 @@ export type Command =
   | { type: 'build'; player: number; unitIds: number[]; key: string; tx: number; ty: number }
   | { type: 'train'; player: number; buildingId: number; unitKey: string }
   | { type: 'attack'; player: number; unitIds: number[]; targetUnitId?: number; targetBuildingId?: number }
-  | { type: 'formation'; player: number; unitIds: number[]; formation: Formation };
+  | { type: 'formation'; player: number; unitIds: number[]; formation: Formation }
+  | { type: 'researchEra'; player: number };
+
+export const ERA_NAMES = ['Settlement', 'City', 'Kingdom', 'Imperial'] as const;
+export const ERA_COSTS: Partial<ResTable>[] = [
+  { food: 350, gold: 250 }, // → City
+  { food: 700, gold: 500, stone: 150 }, // → Kingdom
+  { food: 1200, gold: 900, iron: 200 }, // → Imperial
+];
 
 export interface WorldOptions {
   seed: number;
@@ -100,6 +112,8 @@ export class World {
   private fog = new FogSystem();
   private economy = new EconomySystem();
   private combat = new CombatSystem();
+  private trade = new TradeSystem();
+  territory = new TerritorySystem();
 
   constructor(seed: number, factions: string[], startResources?: Partial<ResTable>);
   constructor(opts: WorldOptions);
@@ -115,12 +129,21 @@ export class World {
         popUsed: 0,
         popCap: 0,
         starving: false,
+        era: 0,
       });
       this.playerFormation.push('loose');
     });
+    this.territory.init(this);
   }
 
-  get grid() {
+  /** Two players are enemies unless allies; Phase 5 diplomacy fills the real
+   *  relation matrix — for now every other player is hostile. */
+  friendly(a: number, b: number): boolean {
+    return a === b;
+  }
+
+  /** Pathing grid for a given owner: own gates are open, enemy buildings block. */
+  gridFor(owner: number) {
     const m = this.map;
     return {
       w: m.w,
@@ -130,10 +153,18 @@ export class World {
         const t = m.tiles[ty * m.w + tx] as Tile;
         if (t === Tile.Bridge || t === Tile.Road) return moveCost(t);
         if (t === Tile.River || t === Tile.Mountain) return Infinity;
-        if (this.buildingAt(tx, ty)) return Infinity;
+        const b = this.buildingAt(tx, ty);
+        if (b) {
+          if (b.key === 'gate' && this.friendly(b.owner, owner)) return 1;
+          return Infinity;
+        }
         return moveCost(t);
       },
     };
+  }
+
+  get grid() {
+    return this.gridFor(-1); // neutral: every building blocks
   }
 
   buildingAt(tx: number, ty: number): BuildingState | null {
@@ -272,8 +303,18 @@ export class World {
       }
       return;
     }
+    if (cmd.type === 'researchEra') {
+      const next = player.era + 1;
+      if (next > 3) return;
+      const cost = ERA_COSTS[player.era];
+      if (!cost || !canAfford(player.res, cost)) return;
+      payCost(player.res, cost);
+      player.era = next;
+      return;
+    }
     if (cmd.type === 'build') {
       const def = buildingDef(cmd.key);
+      if ((def.minEra ?? 0) > player.era) return;
       if (!canPlace(this, cmd.key, cmd.tx, cmd.ty).ok) return;
       if (!canAfford(player.res, def.cost)) return;
       payCost(player.res, def.cost);
@@ -310,6 +351,7 @@ export class World {
       if (!def.trains.includes(cmd.unitKey)) return;
       if (b.queue.length >= 5) return;
       const udef = unitDef(cmd.unitKey);
+      if ((udef.minEra ?? 0) > player.era) return;
       if (player.popUsed + udef.pop > player.popCap) return; // pop cap enforced
       if (!canAfford(player.res, udef.cost)) return;
       payCost(player.res, udef.cost);
@@ -339,7 +381,7 @@ export class World {
     const sx = Math.floor(u.x / TILE);
     const sy = Math.floor(u.y / TILE);
     u.order = { kind: 'move', tx, ty }; // task legs are move orders
-    this.pathQueue.request(this.grid, sx, sy, tx, ty, (p) => {
+    this.pathQueue.request(this.gridFor(u.owner), sx, sy, tx, ty, (p) => {
       const unit = this.units.get(u.id);
       if (!unit) return;
       if (!p) {
@@ -362,8 +404,10 @@ export class World {
     this.pathQueue.drain();
     this.movement.tick(this, dtMs);
     this.economy.tick(this, dtMs);
+    this.trade.tick(this, dtMs);
     this.combat.tick(this, dtMs);
     this.scanAggroSubset();
+    this.territory.tick(this);
     this.fog.update(this);
   }
 
@@ -408,7 +452,7 @@ export class World {
       units: [...this.units.values()].map((u) => ({ ...u, path: null })),
       buildings: [...this.buildings.values()],
       players: this.players.map((p) => ({
-        id: p.id, res: p.res, popUsed: p.popUsed, popCap: p.popCap, starving: p.starving,
+        id: p.id, res: p.res, popUsed: p.popUsed, popCap: p.popCap, starving: p.starving, era: p.era,
       })),
       deposits: this.map.deposits.map((d) => ({ ...d })),
       woodAmount: [...this.map.woodAmount],
@@ -429,6 +473,7 @@ export class World {
       w.players[i].popUsed = sp.popUsed;
       w.players[i].popCap = sp.popCap;
       w.players[i].starving = sp.starving;
+      w.players[i].era = sp.era ?? 0;
     });
     for (const u of s.units) w.units.set(u.id, { ...u, path: null, pathIdx: 0 });
     for (const b of s.buildings) w.buildings.set(b.id, { ...b, queue: b.queue.map((q) => ({ ...q })) });
@@ -444,7 +489,7 @@ export interface SerializedWorld {
   nextBuildingId: number;
   units: UnitState[];
   buildings: BuildingState[];
-  players: { id: number; res: ResTable; popUsed: number; popCap: number; starving: boolean }[];
+  players: { id: number; res: ResTable; popUsed: number; popCap: number; starving: boolean; era?: number }[];
   deposits: { id: number; amount: number }[];
   woodAmount: number[];
 }

@@ -124,7 +124,7 @@ describe('combat basics', () => {
     const row = clearRow(w, 6);
     w.placeBuilding(1, 'watchtower', row[4].tx, row[4].ty, true);
     const tower = [...w.buildings.values()][0];
-    const s = w.spawnUnit(0, 'swordsman', row[0].tx, row[0].ty)!;
+    const s = w.spawnUnit(0, 'batteringRam', row[0].tx, row[0].ty)!;
     w.enqueue({ type: 'attack', player: 0, unitIds: [s.id], targetBuildingId: tower.id });
     run(w, 120);
     expect(w.buildings.has(tower.id)).toBe(false);

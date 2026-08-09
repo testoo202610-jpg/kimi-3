@@ -1,8 +1,11 @@
 import type { CSSProperties } from 'react';
+import { ERA_COSTS, canAfford } from '@cr/core';
 import { FACTIONS } from '@cr/shared';
 import { useHud, type GameSpeed } from '../store';
+import { bridgeEnqueue, bridgePlayerId } from './bridge';
 
 const SPEEDS: GameSpeed[] = [0, 0.5, 1, 2, 4];
+const ERAS = ['Settlement', 'City', 'Kingdom', 'Imperial'];
 
 export function TopBar() {
   const speed = useHud((s) => s.speed);
@@ -11,7 +14,11 @@ export function TopBar() {
   const popUsed = useHud((s) => s.popUsed);
   const popCap = useHud((s) => s.popCap);
   const starving = useHud((s) => s.starving);
+  const era = useHud((s) => s.era);
   const faction = FACTIONS[0];
+
+  const nextCost = era < 3 ? ERA_COSTS[era] : null;
+  const canAdvance = nextCost != null && res != null && canAfford(res, nextCost);
 
   return (
     <div style={styles.bar}>
@@ -23,6 +30,14 @@ export function TopBar() {
       <span style={{ color: starving ? '#e05050' : '#a99a7c' }}>
         Pop {popUsed}/{popCap}{starving ? ' — STARVING' : ''}
       </span>
+      <button
+        style={{ ...styles.btn, ...(canAdvance ? styles.btnActive : {}) }}
+        title={nextCost ? `Advance to ${ERAS[era + 1]}: ${costText(nextCost)}` : 'Max era'}
+        disabled={!canAdvance}
+        onClick={() => bridgeEnqueue({ type: 'researchEra', player: bridgePlayerId() })}
+      >
+        Era: {ERAS[era]}{nextCost ? ' →' : ''}
+      </button>
       <span style={styles.spacer} />
       {SPEEDS.map((s) => (
         <button
@@ -35,6 +50,13 @@ export function TopBar() {
       ))}
     </div>
   );
+}
+
+function costText(cost: Record<string, number | undefined>): string {
+  return Object.entries(cost)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `${v} ${k}`)
+    .join(', ');
 }
 
 function fmt(v: number | undefined): string {

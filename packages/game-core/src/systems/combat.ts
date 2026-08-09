@@ -1,12 +1,13 @@
 import { TILE } from '../map';
 import { unitDef } from '../units';
-import { buildingDef, freeAdjacentTile, type BuildingState } from '../buildings';
+import { buildingDef, buildingCenter, freeAdjacentTile, type BuildingState } from '../buildings';
 import type { World, UnitState } from '../world';
 
 export interface Projectile {
   id: number;
   x: number;
   y: number;
+  shooterId?: number; // unit that fired (towers: none)
   targetUnitId?: number;
   targetBuildingId?: number;
   speed: number; // px/s
@@ -29,7 +30,36 @@ export class CombatSystem {
   tick(world: World, dtMs: number) {
     const dt = dtMs / 1000;
     this.tickUnits(world, dt);
+    this.tickTowers(world, dt);
     this.tickProjectiles(world, dt);
+  }
+
+  // ---- towers: buildings with atk fire on nearest enemy in range ----
+  private tickTowers(world: World, dt: number) {
+    for (const b of world.buildings.values()) {
+      const def = buildingDef(b.key);
+      if (!def.atk || !def.rangeT || !b.built) continue;
+      b.atkCd = (b.atkCd ?? 0) - dt;
+      if (b.atkCd > 0) continue;
+      const c = buildingCenter(b);
+      let best: UnitState | null = null;
+      let bestD = def.rangeT * TILE;
+      for (const u of world.units.values()) {
+        if (world.friendly(u.owner, b.owner)) continue;
+        const d = Math.hypot(u.x - c.x, u.y - c.y);
+        if (d < bestD) { bestD = d; best = u; }
+      }
+      if (!best) { b.atkCd = 0.5; continue; }
+      b.atkCd = ATTACK_COOLDOWN;
+      this.projectiles.push({
+        id: nextProjectileId++,
+        x: c.x,
+        y: c.y,
+        targetUnitId: best.id,
+        speed: 320,
+        damage: def.atk,
+      });
+    }
   }
 
   // ---- units ----
@@ -108,6 +138,7 @@ export class CombatSystem {
       id: nextProjectileId++,
       x: shooter.x,
       y: shooter.y,
+      shooterId: shooter.id,
       targetUnitId: tgt.unitId,
       targetBuildingId: tgt.buildingId,
       speed: 320,
@@ -174,8 +205,8 @@ export class CombatSystem {
       const step = p.speed * dt;
       if (dist <= step + 4) {
         // hit
+        const attacker = p.shooterId != null ? world.units.get(p.shooterId) ?? null : null;
         if (targetUnit) {
-          const attacker = [...world.units.values()].find((x) => x.combat?.awaitingProjectile && x.combat.unitId === targetUnit.id);
           targetUnit.hp -= p.damage;
           targetUnit.morale = Math.max(0, targetUnit.morale - p.damage * 0.25);
           if (targetUnit.hp <= 0) {
@@ -188,11 +219,10 @@ export class CombatSystem {
               if (d <= CASUALTY_RADIUS) ally.morale = Math.max(0, ally.morale - CASUALTY_MORALE_LOSS);
             }
           }
-          if (attacker) attacker.combat!.awaitingProjectile!--;
+          if (attacker?.combat?.awaitingProjectile) attacker.combat.awaitingProjectile--;
         } else if (targetBuilding) {
-          const attacker = [...world.units.values()].find((x) => x.combat?.awaitingProjectile && x.combat.buildingId === targetBuilding!.id);
           this.applyDamageBuilding(world, targetBuilding, p.damage);
-          if (attacker) attacker.combat!.awaitingProjectile!--;
+          if (attacker?.combat?.awaitingProjectile) attacker.combat.awaitingProjectile--;
         }
         this.projectiles.splice(i, 1);
       } else {
@@ -210,7 +240,7 @@ export class CombatSystem {
     let best: UnitState | null = null;
     let bestD = AGGRO_RANGE;
     for (const e of world.units.values()) {
-      if (e.owner === u.owner) continue;
+      if (world.friendly(e.owner, u.owner)) continue;
       const d = Math.hypot(e.x - u.x, e.y - u.y);
       if (d < bestD) { bestD = d; best = e; }
     }

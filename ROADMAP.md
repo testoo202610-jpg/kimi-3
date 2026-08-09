@@ -5,13 +5,13 @@ Each phase ends with: tests green, `typecheck` green, `lint` green,
 
 - [x] Phase 1 — Foundation: repo, docs, game-core (map gen, A*, movement,
       fog), Phaser scene, camera, selection, right-click move, server stub.
-- [ ] Phase 2 — Core RTS: resources on map, worker gather/carry/drop-off,
+- [x] Phase 2 — Core RTS: resources on map, worker gather/carry/drop-off,
       building placement/preview/construction, population cap, houses/farms,
       granary bonus, idle worker ping.
-- [ ] Phase 3 — Military: unit defs (infantry/archers/cavalry), barracks
+- [x] Phase 3 — Military: unit defs (infantry/archers/cavalry), barracks
       training, combat (armor, counters, projectiles), basic morale,
       formations (line/wedge/square/loose).
-- [ ] Phase 4 — City & economy: city zones, market, gold, trade routes,
+- [x] Phase 4 — City & economy: city zones, market, gold, trade routes,
       territory projection, era upgrades, wall/gate/tower.
 - [ ] Phase 5 — Strategic: generals, armies, abilities, supply system,
       diplomacy, city capture by occupation.

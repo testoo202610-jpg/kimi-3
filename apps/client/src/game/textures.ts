@@ -73,6 +73,14 @@ export function generateTextures(scene: Phaser.Scene) {
   g.generateTexture('unit-catapult', 34, 28);
   g.clear();
 
+  // caravan: cart + two wheels
+  g.fillStyle(0xffffff, 1).fillRect(4, 8, 22, 10);
+  g.fillRect(18, 4, 6, 6);
+  g.fillCircle(9, 20, 4);
+  g.fillCircle(21, 20, 4);
+  g.generateTexture('unit-caravan', 28, 24);
+  g.clear();
+
   // generic fallback dot
   g.fillStyle(0xffffff, 1).fillCircle(10, 10, 8);
   g.generateTexture('unit-default', 20, 20);
@@ -90,6 +98,9 @@ const BLDCOLORS: Record<string, [number, number]> = {
   mineCamp: [0xa89a8a, 0x4a3a3a],
   warehouse: [0xcbb590, 0x6a6a2f],
   watchtower: [0xbab5a8, 0x8a4a3a],
+  wall: [0x8a8578, 0x6e695e],
+  gate: [0x9a7a50, 0x5e4630],
+  market: [0xcbb590, 0x2f6a6a],
 };
 
 export function generateBuildingTextures(scene: Phaser.Scene, defs: Record<string, { w: number; h: number }>, tile: number) {
@@ -135,4 +146,5 @@ export const UNIT_TEXTURE: Record<string, string> = {
   heavyCavalry: 'unit-heavyCavalry',
   batteringRam: 'unit-batteringRam',
   catapult: 'unit-catapult',
+  caravan: 'unit-caravan',
 };

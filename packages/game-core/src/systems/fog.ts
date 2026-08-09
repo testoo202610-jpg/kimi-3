@@ -1,5 +1,6 @@
 import { TILE, GameMap } from '../map';
 import { unitDef } from '../units';
+import { buildingDef } from '../buildings';
 import type { World } from '../world';
 
 export interface FogState {
@@ -25,6 +26,14 @@ export class FogSystem {
       for (const u of world.units.values()) {
         if (u.owner !== p.id) continue;
         this.stamp(world, p.fog, Math.floor(u.x / TILE), Math.floor(u.y / TILE), unitDef(u.type).vision);
+      }
+      // buildings: town centers see a modest radius, towers see far
+      for (const b of world.buildings.values()) {
+        if (b.owner !== p.id || !b.built) continue;
+        const def = buildingDef(b.key);
+        const vision = def.visionT ?? (def.projectsTerritory ? 6 : 0);
+        if (!vision) continue;
+        this.stamp(world, p.fog, b.tx, b.ty, vision);
       }
       p.fog.dirty = true;
     }
