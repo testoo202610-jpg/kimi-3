@@ -124,6 +124,8 @@ export class World {
   private buildingTiles = new Map<number, BuildingState>(); // tile idx → building footprint
   players: PlayerState[] = [];
   queue: Command[] = [];
+  /** netplay: absolute-tick scheduled commands (lockstep). Apply order = arrival order. */
+  scheduled: { cmd: Command; at: number }[] = [];
   pathQueue = new PathQueue(16);
   nextUnitId = 1;
   nextBuildingId = 1;
@@ -293,6 +295,12 @@ export class World {
 
   enqueue(cmd: Command) {
     this.queue.push(cmd);
+  }
+
+  /** schedule for an absolute tick (multiplayer). `at <= current` applies next tick. */
+  enqueueAt(cmd: Command, at: number) {
+    if (at <= this.tickCount + 1) this.queue.push(cmd);
+    else this.scheduled.push({ cmd, at });
   }
 
   private apply(cmd: Command) {
@@ -523,7 +531,12 @@ export class World {
 
   tick(dtMs = TICK_MS) {
     this.tickCount++;
-    const cmds = this.queue;
+    const due: Command[] = [];
+    this.scheduled = this.scheduled.filter((s) => {
+      if (s.at <= this.tickCount) due.push(s.cmd);
+      return s.at > this.tickCount;
+    });
+    const cmds = [...due, ...this.queue];
     this.queue = [];
     for (const c of cmds) this.apply(c);
     this.pathQueue.drain();
@@ -590,6 +603,7 @@ export class World {
       fogExplored: this.players.map((p) => Array.from(p.fog.explored)),
       formations: [...this.playerFormation],
       ai: this.ai.snapshot(),
+      scheduled: this.scheduled.map((s) => ({ cmd: s.cmd, at: s.at })),
     };
   }
 
@@ -629,6 +643,7 @@ export class World {
     });
     if (s.formations) s.formations.forEach((f, i) => (w.playerFormation[i] = f));
     if (s.ai) for (const [pid, diff] of s.ai) w.ai.add(pid, diff);
+    if (s.scheduled) w.scheduled = s.scheduled.map((sc) => ({ cmd: sc.cmd, at: sc.at }));
     return w;
   }
 }
@@ -650,6 +665,7 @@ export interface SerializedWorld {
   fogExplored?: number[][];
   formations?: Formation[];
   ai?: [number, import('./systems/ai').Difficulty][];
+  scheduled?: { cmd: Command; at: number }[];
 }
 
 // formation offsets for group move targets — prevents stacking, shapes the army

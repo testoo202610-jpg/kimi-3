@@ -5,6 +5,7 @@ export * from './units';
 export * from './buildings';
 export * from './generals';
 export * from './world';
+export * from './setup';
 export * from './systems/movement';
 export * from './systems/fog';
 export * from './systems/economy';

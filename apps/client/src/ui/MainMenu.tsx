@@ -50,6 +50,7 @@ export function MainMenu() {
         <div style={{ color: '#a8977a', marginBottom: 28, fontStyle: 'italic' }}>Three banners rise. One shall hold the passes.</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <button style={btnPrimary} onClick={() => setScreen('setup')} data-testid="menu-new-game">New Skirmish</button>
+          <button style={btn} onClick={() => setScreen('lobby')} data-testid="menu-multiplayer">Multiplayer</button>
           <button style={btn} onClick={() => setShowSaves(!showSaves)} data-testid="menu-load-game">
             Load Game{saves.length ? ` (${saves.length})` : ''}
           </button>

@@ -4,6 +4,7 @@ import { bridgeWorld } from '../hud/bridge';
 import { btn, btnPrimary, panel, title } from '../hud/theme';
 import { listLocalSaves, loadLocal, saveLocal, saveServer, loadServer, listServerSaves, type SaveMeta } from './saves';
 import { World } from '@cr/core';
+import { net } from '../game/net';
 
 /** in-game menu overlay: save / load / settings / quit */
 export function GameMenu() {
@@ -57,6 +58,7 @@ export function GameMenu() {
   };
 
   const quit = () => {
+    net.leave(); // no-op for single-player sessions
     setBoot(null);
     setOpen(false);
     setScreen('menu');

@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
 import {
-  BUILDING_DEFS, GENERALS_BY_LEAN, TILE, TICK_MS, Tile, World, buildingDef, canPlace, isBlocked, tileAt, unitDef,
-  type BuildingState, type UnitState,
+  BUILDING_DEFS, TILE, TICK_MS, Tile, World, buildingDef, canPlace, isBlocked, spawnStartingForces, tileAt, unitDef,
+  type BuildingState, type Command, type SerializedWorld, type UnitState,
 } from '@cr/core';
 import { FACTION_BY_ID, type FactionId } from '@cr/shared';
 import { useHud, type BootConfig } from '../../store';
 import { UNIT_TEXTURE, generateBuildingTextures, generateTextures } from '../textures';
+import { net } from '../net';
 
 interface UnitView {
   container: Phaser.GameObjects.Container;
@@ -41,6 +42,7 @@ export class WorldScene extends Phaser.Scene {
   private attackMoveMode = false;
 
   private simAcc = 0;
+  mp = false;
   private fogBlack!: Phaser.GameObjects.RenderTexture;
   private fogGray!: Phaser.GameObjects.Graphics;
   private terrLayer!: Phaser.GameObjects.Graphics;
@@ -60,38 +62,31 @@ export class WorldScene extends Phaser.Scene {
 
   create() {
     const cfg = this.registry.get('bootConfig') as BootConfig;
-    this.playerId = 0; // single-player: local player is always faction slot 0
-    this.factionId = cfg.factions[0];
-    this.world = cfg.save ? World.deserialize(cfg.save) : new World(cfg.seed | 1, cfg.factions);
+    this.mp = !!cfg.mp;
+    this.playerId = this.mp ? net.slot : 0;
+    this.factionId = cfg.factions[this.playerId];
+    if (this.mp && net.pendingSnapshot) {
+      // rejoin / late sync: take the authoritative world as-is
+      this.world = World.deserialize(net.pendingSnapshot);
+      net.pendingSnapshot = null;
+    } else if (cfg.save) {
+      this.world = World.deserialize(cfg.save);
+    } else {
+      this.world = new World(cfg.seed | 1, cfg.factions);
+    }
     for (const a of cfg.ai) this.world.ai.add(a.player, a.difficulty);
+    if (this.mp) {
+      // AI slots = non-human slots; every peer adds them identically (deterministic)
+      for (let i = 0; i < cfg.factions.length; i++) if (!net.humanSlots.includes(i)) this.world.ai.add(i, 'normal');
+    }
     generateTextures(this);
     generateBuildingTextures(this, BUILDING_DEFS, TILE);
 
     const start = this.world.map.starts[this.playerId];
-    if (!cfg.save) {
-      // starting settlements: pre-built town center per faction + starting forces
-      for (let p = 0; p < cfg.factions.length; p++) {
-        const s = this.world.map.starts[p];
-        this.world.placeBuilding(p, 'townCenter', s.tx - 1, s.ty - 1, true);
-        const isPlayer = p === this.playerId;
-        const forces = isPlayer
-          ? ['worker', 'worker', 'worker', 'worker', 'worker', 'worker', 'militia', 'militia', 'militia']
-          : ['worker', 'worker', 'worker', 'worker', 'militia', 'militia'];
-        for (const type of forces) {
-          for (let i = 0; i < 40; i++) {
-            const t = scatter(s.tx + 3, s.ty + 1, i);
-            if (this.world.spawnUnit(p, type, t.tx, t.ty)) break;
-          }
-        }
-        // generals: two named heroes per faction start beside the town center
-        for (const gkey of GENERALS_BY_LEAN[cfg.factions[p]] ?? []) {
-          for (let i = 0; i < 40; i++) {
-            const t = scatter(s.tx + 2, s.ty + 3, i);
-            if (this.world.spawnUnit(p, gkey, t.tx, t.ty)) break;
-          }
-        }
-      }
+    if (!cfg.save && !(this.mp && this.world.units.size > 0)) {
+      spawnStartingForces(this.world, cfg.factions, new Set(this.mp ? net.humanSlots : [this.playerId]));
     }
+    if (this.mp) net.attachScene(this);
     this.lastEra = this.world.players[this.playerId].era;
 
     this.ghost = this.add.graphics().setDepth(9500);
@@ -107,6 +102,32 @@ export class WorldScene extends Phaser.Scene {
     cam.setZoom(1);
 
     (window as any).__cr_scene = this; // HUD bridge (selection details)
+
+  }
+
+  // ---------- multiplayer ----------
+  /** All player input funnels here: local sim in SP, server relay in MP. */
+  issue(cmd: Command) {
+    if (this.mp) net.sendCmd(cmd);
+    else this.world.enqueue(cmd);
+  }
+
+  applyNetCmd(at: number, cmd: Command) {
+    this.world.enqueueAt(cmd, at);
+  }
+
+  /** Authoritative resync (periodic / reconnect). Views reconcile by id. */
+  applySnapshot(blob: SerializedWorld) {
+    this.world = World.deserialize(blob);
+  }
+
+  /** ponytail: on disconnect we freeze the sim instead of resyncing.
+   *  Upgrade path: auto-reconnect + snapshot catch-up in place. */
+  netDead = false;
+  onNetClose() {
+    if (!this.mp) return;
+    this.netDead = true;
+    useHud.getState().notify('Disconnected from server — sim paused. Rejoin the room to continue.', 'warn');
   }
 
   // ---------- terrain ----------
@@ -334,10 +355,10 @@ export class WorldScene extends Phaser.Scene {
         this.attackMoveMode = true; // next right-click = attack-move
       }
       if ((e.key === 's' || e.key === 'S') && this.selected.size) {
-        this.world.enqueue({ type: 'stop', player: this.playerId, unitIds: [...this.selected] });
+        this.issue({ type: 'stop', player: this.playerId, unitIds: [...this.selected] });
       }
       if ((e.key === 'h' || e.key === 'H') && this.selected.size) {
-        this.world.enqueue({ type: 'hold', player: this.playerId, unitIds: [...this.selected] });
+        this.issue({ type: 'hold', player: this.playerId, unitIds: [...this.selected] });
       }
       const digit = parseInt(e.key, 10);
       if (digit >= 1 && digit <= 9) {
@@ -447,7 +468,7 @@ export class WorldScene extends Phaser.Scene {
     if (!canPlace(this.world, key, tx, ty).ok) return;
     const workers = [...this.selected].filter((id) => this.world.units.get(id)?.type === 'worker');
     if (!workers.length) return;
-    this.world.enqueue({ type: 'build', player: this.playerId, unitIds: workers, key, tx, ty });
+    this.issue({ type: 'build', player: this.playerId, unitIds: workers, key, tx, ty });
     if (!shift) {
       useHud.getState().setBuildKey(null);
       this.ghost.clear();
@@ -468,13 +489,13 @@ export class WorldScene extends Phaser.Scene {
     // attack: enemy unit or building under cursor
     const enemy = this.pickUnit(world);
     if (enemy && enemy.owner !== this.playerId && military.length) {
-      this.world.enqueue({ type: 'attack', player: this.playerId, unitIds: military, targetUnitId: enemy.id });
+      this.issue({ type: 'attack', player: this.playerId, unitIds: military, targetUnitId: enemy.id });
       this.orderMarker(world.x, world.y, 0xd05050);
       return;
     }
     const eb = this.pickBuilding(world);
     if (eb && eb.owner !== this.playerId && military.length) {
-      this.world.enqueue({ type: 'attack', player: this.playerId, unitIds: military, targetBuildingId: eb.id });
+      this.issue({ type: 'attack', player: this.playerId, unitIds: military, targetBuildingId: eb.id });
       this.orderMarker(world.x, world.y, 0xd05050);
       return;
     }
@@ -482,7 +503,7 @@ export class WorldScene extends Phaser.Scene {
     if (this.attackMoveMode) {
       this.attackMoveMode = false;
       if (military.length) {
-        this.world.enqueue({ type: 'attackMove', player: this.playerId, unitIds: military, tx, ty });
+        this.issue({ type: 'attackMove', player: this.playerId, unitIds: military, tx, ty });
         this.orderMarker(world.x, world.y, 0xe0a050);
         return;
       }
@@ -493,11 +514,11 @@ export class WorldScene extends Phaser.Scene {
     if (workers.length && (deposit || forest)) {
       const target = deposit ? { tx: deposit.tx, ty: deposit.ty } : { tx, ty };
       if (!deposit && isBlocked(this.world.map, tx, ty)) return;
-      this.world.enqueue({ type: 'gather', player: this.playerId, unitIds: workers, tx: target.tx, ty: target.ty });
+      this.issue({ type: 'gather', player: this.playerId, unitIds: workers, tx: target.tx, ty: target.ty });
       return;
     }
     if (isBlocked(this.world.map, tx, ty)) return;
-    this.world.enqueue({ type: 'move', player: this.playerId, unitIds: selected, tx, ty });
+    this.issue({ type: 'move', player: this.playerId, unitIds: selected, tx, ty });
     this.orderMarker(world.x, world.y, 0xd8b13a);
   }
 
@@ -512,7 +533,7 @@ export class WorldScene extends Phaser.Scene {
 
   // ---------- frame ----------
   override update(_time: number, delta: number) {
-    const speed = useHud.getState().speed;
+    const speed = this.mp || this.netDead ? (this.netDead ? 0 : 1) : useHud.getState().speed;
     if (speed > 0) {
       this.simAcc += delta * speed;
       while (this.simAcc >= TICK_MS) {
@@ -727,20 +748,6 @@ export class WorldScene extends Phaser.Scene {
     cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, this.world.map.w * TILE - cam.width / cam.zoom);
     cam.scrollY = Phaser.Math.Clamp(cam.scrollY, 0, this.world.map.h * TILE - cam.height / cam.zoom);
   }
-}
-
-function scatter(cx: number, cy: number, i: number): { tx: number; ty: number } {
-  // small deterministic spiral around the start point
-  let x = 0;
-  let y = 0;
-  let dx = 0;
-  let dy = -1;
-  for (let s = 0; s < i; s++) {
-    if (x === y || (x < 0 && x === -y) || (x > 0 && x === 1 - y)) [dx, dy] = [-dy, dx];
-    x += dx;
-    y += dy;
-  }
-  return { tx: cx + x, ty: cy + y };
 }
 
 function shade(color: number, j: number): number {

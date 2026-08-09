@@ -3,7 +3,7 @@ import type { Difficulty, ResTable, SerializedWorld } from '@cr/core';
 import type { FactionId } from '@cr/shared';
 
 export type GameSpeed = 0 | 0.5 | 1 | 2 | 4; // 0 = paused
-export type Screen = 'menu' | 'setup' | 'game';
+export type Screen = 'menu' | 'setup' | 'lobby' | 'game';
 
 export interface BootConfig {
   seed: number;
@@ -11,6 +11,7 @@ export interface BootConfig {
   ai: { player: number; difficulty: Difficulty }[];
   save?: SerializedWorld; // resume instead of fresh world
   saveSlot?: number; // which slot this session writes to
+  mp?: boolean; // multiplayer: world+slot come from the net session
 }
 
 export interface Settings {

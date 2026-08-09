@@ -6,10 +6,18 @@ export default defineConfig({
   retries: 0,
   workers: 1, // one shared dev server, one world per page — keep runs serial
   use: { baseURL: 'http://localhost:5173', headless: true },
-  webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
+  webServer: [
+    {
+      command: 'npm run dev',
+      url: 'http://localhost:5173',
+      reuseExistingServer: true,
+      timeout: 120_000,
+    },
+    {
+      command: 'npm run dev:server',
+      port: 4000,
+      reuseExistingServer: true,
+      timeout: 120_000,
+    },
+  ],
 });

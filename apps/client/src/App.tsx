@@ -4,6 +4,7 @@ import { TopBar } from './hud/TopBar';
 import { CommandPanel } from './hud/CommandPanel';
 import { MainMenu } from './ui/MainMenu';
 import { SetupScreen } from './ui/SetupScreen';
+import { LobbyScreen } from './ui/LobbyScreen';
 import { Minimap } from './ui/Minimap';
 import { Toasts } from './ui/Toasts';
 import { GameMenu } from './ui/GameMenu';
@@ -16,6 +17,7 @@ export default function App() {
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       {screen === 'menu' && <MainMenu />}
       {screen === 'setup' && <SetupScreen />}
+      {screen === 'lobby' && <LobbyScreen />}
       {screen === 'game' && boot && <GameView key={JSON.stringify({ s: boot.seed, f: boot.factions, saved: !!boot.save })} />}
       <Toasts />
     </div>

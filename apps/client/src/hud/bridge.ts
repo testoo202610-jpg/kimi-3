@@ -10,7 +10,7 @@ export function bridgePlayerId(): number {
 }
 
 export function bridgeEnqueue(cmd: Command) {
-  (window as any).__cr_scene?.world.enqueue(cmd);
+  (window as any).__cr_scene?.issue(cmd);
 }
 
 /** jump camera to a world-pixel position (minimap clicks) */
