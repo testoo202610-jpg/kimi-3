@@ -64,6 +64,21 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
     key: 'watchtower', name: 'Watchtower', w: 1, h: 1, hp: 450, buildTime: 14,
     cost: { stone: 80, wood: 20 }, popCap: 0, dropoff: [], trains: [], farmYield: 0, terrain: 'any', radius: 0,
   },
+  barracks: {
+    key: 'barracks', name: 'Barracks', w: 3, h: 2, hp: 700, buildTime: 18,
+    cost: { wood: 120, stone: 60 }, popCap: 0, dropoff: [],
+    trains: ['militia', 'spearman', 'swordsman', 'heavyInfantry'], farmYield: 0, terrain: 'any', radius: 0,
+  },
+  archeryRange: {
+    key: 'archeryRange', name: 'Archery Range', w: 2, h: 2, hp: 500, buildTime: 14,
+    cost: { wood: 100, gold: 20 }, popCap: 0, dropoff: [],
+    trains: ['archer', 'crossbowman'], farmYield: 0, terrain: 'any', radius: 0,
+  },
+  stable: {
+    key: 'stable', name: 'Stable', w: 3, h: 2, hp: 600, buildTime: 16,
+    cost: { wood: 110, food: 40 }, popCap: 0, dropoff: [],
+    trains: ['scoutCavalry', 'lightCavalry', 'heavyCavalry'], farmYield: 0, terrain: 'any', radius: 0,
+  },
 };
 
 export function buildingDef(key: string): BuildingDef {

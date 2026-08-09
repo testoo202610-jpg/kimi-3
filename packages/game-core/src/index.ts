@@ -7,3 +7,4 @@ export * from './world';
 export * from './systems/movement';
 export * from './systems/fog';
 export * from './systems/economy';
+export * from './systems/combat';

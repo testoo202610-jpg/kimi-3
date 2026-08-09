@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import {
-  BUILDING_DEFS, TILE, TICK_MS, Tile, World, buildingDef, canPlace, isBlocked, tileAt,
+  BUILDING_DEFS, TILE, TICK_MS, Tile, World, buildingDef, canPlace, isBlocked, tileAt, unitDef,
   type BuildingState, type UnitState,
 } from '@cr/core';
 import { FACTION_BY_ID, type FactionId } from '@cr/shared';
@@ -12,6 +12,8 @@ const OWNER_FACTION: FactionId[] = ['dominion', 'river', 'hills'];
 interface UnitView {
   container: Phaser.GameObjects.Container;
   ring: Phaser.GameObjects.Graphics;
+  hpBar: Phaser.GameObjects.Graphics;
+  lastHp: number;
   prevX: number;
   prevY: number;
   curX: number;
@@ -37,6 +39,8 @@ export class WorldScene extends Phaser.Scene {
   private selected = new Set<number>();
   private groups = new Map<number, number[]>();
   private ghost!: Phaser.GameObjects.Graphics;
+  private projLayer!: Phaser.GameObjects.Graphics;
+  private attackMoveMode = false;
 
   private simAcc = 0;
   private fogBlack!: Phaser.GameObjects.RenderTexture;
@@ -79,6 +83,7 @@ export class WorldScene extends Phaser.Scene {
     void start;
 
     this.ghost = this.add.graphics().setDepth(9500);
+    this.projLayer = this.add.graphics().setDepth(6000);
     this.paintTerrain();
     this.buildFogLayers();
     this.setupInput();
@@ -290,10 +295,14 @@ export class WorldScene extends Phaser.Scene {
 
     this.input.keyboard!.on('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        this.attackMoveMode = false;
         useHud.getState().setBuildKey(null);
         useHud.getState().setSelectedBuilding(null);
         this.ghost.clear();
         this.setSelected([]);
+      }
+      if ((e.key === 'a' || e.key === 'A') && this.selected.size) {
+        this.attackMoveMode = true; // next right-click = attack-move
       }
       if ((e.key === 's' || e.key === 'S') && this.selected.size) {
         this.world.enqueue({ type: 'stop', player: this.playerId, unitIds: [...this.selected] });
@@ -420,8 +429,36 @@ export class WorldScene extends Phaser.Scene {
     if (!this.selected.size) return;
     const tx = Math.floor(world.x / TILE);
     const ty = Math.floor(world.y / TILE);
-    const selected = [...this.selected];
+    const selected = [...this.selected].filter((id) => this.world.units.has(id));
+    const military = selected.filter((id) => {
+      const u = this.world.units.get(id);
+      return u && u.type !== 'worker';
+    });
     const workers = selected.filter((id) => this.world.units.get(id)?.type === 'worker');
+
+    // attack: enemy unit or building under cursor
+    const enemy = this.pickUnit(world);
+    if (enemy && enemy.owner !== this.playerId && military.length) {
+      this.world.enqueue({ type: 'attack', player: this.playerId, unitIds: military, targetUnitId: enemy.id });
+      this.orderMarker(world.x, world.y, 0xd05050);
+      return;
+    }
+    const eb = this.pickBuilding(world);
+    if (eb && eb.owner !== this.playerId && military.length) {
+      this.world.enqueue({ type: 'attack', player: this.playerId, unitIds: military, targetBuildingId: eb.id });
+      this.orderMarker(world.x, world.y, 0xd05050);
+      return;
+    }
+
+    if (this.attackMoveMode) {
+      this.attackMoveMode = false;
+      if (military.length) {
+        this.world.enqueue({ type: 'attackMove', player: this.playerId, unitIds: military, tx, ty });
+        this.orderMarker(world.x, world.y, 0xe0a050);
+        return;
+      }
+    }
+
     const deposit = this.world.map.deposits.find((d) => Math.abs(d.tx - tx) <= 1 && Math.abs(d.ty - ty) <= 1 && d.amount > 0);
     const forest = tileAt(this.world.map, tx, ty) === Tile.Forest;
     if (workers.length && (deposit || forest)) {
@@ -432,12 +469,15 @@ export class WorldScene extends Phaser.Scene {
     }
     if (isBlocked(this.world.map, tx, ty)) return;
     this.world.enqueue({ type: 'move', player: this.playerId, unitIds: selected, tx, ty });
-    // move marker
+    this.orderMarker(world.x, world.y, 0xd8b13a);
+  }
+
+  private orderMarker(x: number, y: number, color: number) {
     const m = this.add.graphics().setDepth(5000);
-    m.lineStyle(2, 0xd8b13a, 1);
-    m.strokeCircle(world.x, world.y, 10);
-    m.lineBetween(world.x - 14, world.y, world.x + 14, world.y);
-    m.lineBetween(world.x, world.y - 14, world.x, world.y + 14);
+    m.lineStyle(2, color, 1);
+    m.strokeCircle(x, y, 10);
+    m.lineBetween(x - 14, y, x + 14, y);
+    m.lineBetween(x, y - 14, x, y + 14);
     this.tweens.add({ targets: m, alpha: 0, scale: 1.6, duration: 500, onComplete: () => m.destroy() });
   }
 
@@ -457,6 +497,7 @@ export class WorldScene extends Phaser.Scene {
     this.handleCamera(delta);
     this.syncViews(alpha);
     this.syncBuildings();
+    this.drawProjectiles();
 
     const fog = this.world.players[this.playerId].fog;
     if (fog.dirty) {
@@ -472,6 +513,22 @@ export class WorldScene extends Phaser.Scene {
       if (alive.length !== this.selected.size) this.setSelected(alive);
       const pl = this.world.players[this.playerId];
       useHud.getState().setEconomy({ ...pl.res }, pl.popUsed, pl.popCap, pl.starving);
+    }
+  }
+
+  private drawProjectiles() {
+    this.projLayer.clear();
+    const projs = this.world.projectiles;
+    if (!projs.length) return;
+    const fog = this.world.players[this.playerId].fog;
+    const { w } = this.world.map;
+    for (const p of projs) {
+      const ti = Math.floor(p.y / TILE) * w + Math.floor(p.x / TILE);
+      if (fog.visible[ti] !== 1) continue; // only draw in visible tiles
+      this.projLayer.fillStyle(0xffd890, 1);
+      this.projLayer.fillCircle(p.x, p.y, 2.5);
+      this.projLayer.fillStyle(0xffd890, 0.35);
+      this.projLayer.fillCircle(p.x, p.y, 5);
     }
   }
 
@@ -558,6 +615,17 @@ export class WorldScene extends Phaser.Scene {
       const y = v.prevY + (v.curY - v.prevY) * alpha;
       v.container.setPosition(x, y);
       v.container.setDepth(100 + y * 0.001);
+      // hp bar when damaged or fighting
+      const def = unitDef(u.type);
+      if (u.hp < def.hp && v.lastHp !== u.hp) {
+        v.lastHp = u.hp;
+        v.hpBar.clear();
+        v.hpBar.visible = true;
+        const pct = Math.max(0, u.hp / def.hp);
+        v.hpBar.fillStyle(0x000000, 0.6).fillRect(-12, -22, 24, 4);
+        v.hpBar.fillStyle(pct > 0.5 ? 0x60c060 : pct > 0.25 ? 0xd0a030 : 0xd05030).fillRect(-11, -21, 22 * pct, 2);
+      }
+      if (u.hp >= def.hp && v.hpBar.visible) v.hpBar.visible = false;
     }
     for (const [id, v] of this.views) {
       if (!seen.has(id)) {
@@ -574,11 +642,13 @@ export class WorldScene extends Phaser.Scene {
     ring.lineStyle(2, 0xffffff, 0.9);
     ring.strokeEllipse(0, 8, 26, 10);
     ring.visible = this.selected.has(u.id);
+    const hpBar = this.add.graphics();
+    hpBar.visible = false;
     const body = this.add.image(0, -6, UNIT_TEXTURE[u.type] ?? 'unit-default');
     body.setTint(faction.color);
-    const c = this.add.container(u.x, u.y, [ring, body]);
+    const c = this.add.container(u.x, u.y, [ring, body, hpBar]);
     c.setDepth(100 + u.y * 0.001);
-    return { container: c, ring, prevX: u.x, prevY: u.y, curX: u.x, curY: u.y };
+    return { container: c, ring, hpBar, lastHp: -1, prevX: u.x, prevY: u.y, curX: u.x, curY: u.y };
   }
 
   private handleCamera(delta: number) {

@@ -75,6 +75,21 @@ export function CommandPanel() {
         )}
       </div>
       <div style={styles.right}>
+        {!b && info.length > 0 && (
+          <span style={styles.group}>
+            {(['loose', 'line', 'wedge', 'square'] as const).map((f) => (
+              <button
+                key={f}
+                style={{ ...styles.btn, padding: '3px 7px', fontSize: 11 }}
+                onClick={() =>
+                  bridgeEnqueue({ type: 'formation', player: bridgePlayerId(), unitIds: selection, formation: f })
+                }
+              >
+                {f}
+              </button>
+            ))}
+          </span>
+        )}
         {b && bdef?.trains.map((u) => (
           <TrainButton key={u} buildingId={b.id} unitKey={u} />
         ))}
@@ -135,6 +150,7 @@ const styles: Record<string, CSSProperties> = {
   left: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', flex: 1 },
   right: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', maxWidth: '55%', justifyContent: 'flex-end' },
   hint: { color: '#8a7c60', fontSize: 13 },
+  group: { display: 'flex', gap: 4, alignItems: 'center' },
   card: {
     background: '#241b11',
     border: '1px solid #4a3a24',

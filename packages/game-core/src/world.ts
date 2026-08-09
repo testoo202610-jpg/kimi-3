@@ -3,6 +3,7 @@ import { PathQueue, Node } from './pathfinding';
 import { MovementSystem } from './systems/movement';
 import { FogSystem, FogState } from './systems/fog';
 import { EconomySystem } from './systems/economy';
+import { CombatSystem } from './systems/combat';
 import {
   BuildingState, ResTable, buildingDef, canAfford, canPlace, freeAdjacentTile, payCost,
 } from './buildings';
@@ -17,6 +18,16 @@ export type Order =
   | { kind: 'hold' };
 
 export type TaskPhase = 'goto' | 'working' | 'delivering';
+
+export interface CombatState {
+  unitId: number | null;
+  buildingId: number | null;
+  cooldown: number;
+  awaitingProjectile?: number;
+  pendingDamage?: number;
+}
+
+export type Formation = 'loose' | 'line' | 'wedge' | 'square';
 
 export interface UnitTask {
   kind: 'gather' | 'build';
@@ -41,6 +52,8 @@ export interface UnitState {
   holdPosition: boolean;
   task: UnitTask | null;
   carry: { kind: keyof ResTable; amount: number } | null;
+  combat: CombatState | null;
+  attackMoveResume: Order | null; // attack-move order to resume after a kill
 }
 
 export interface PlayerState {
@@ -60,7 +73,9 @@ export type Command =
   | { type: 'hold'; player: number; unitIds: number[] }
   | { type: 'gather'; player: number; unitIds: number[]; tx: number; ty: number }
   | { type: 'build'; player: number; unitIds: number[]; key: string; tx: number; ty: number }
-  | { type: 'train'; player: number; buildingId: number; unitKey: string };
+  | { type: 'train'; player: number; buildingId: number; unitKey: string }
+  | { type: 'attack'; player: number; unitIds: number[]; targetUnitId?: number; targetBuildingId?: number }
+  | { type: 'formation'; player: number; unitIds: number[]; formation: Formation };
 
 export interface WorldOptions {
   seed: number;
@@ -80,9 +95,11 @@ export class World {
   nextUnitId = 1;
   nextBuildingId = 1;
   tickCount = 0;
+  playerFormation: Formation[] = [];
   private movement = new MovementSystem();
   private fog = new FogSystem();
   private economy = new EconomySystem();
+  private combat = new CombatSystem();
 
   constructor(seed: number, factions: string[], startResources?: Partial<ResTable>);
   constructor(opts: WorldOptions);
@@ -99,6 +116,7 @@ export class World {
         popCap: 0,
         starving: false,
       });
+      this.playerFormation.push('loose');
     });
   }
 
@@ -153,6 +171,8 @@ export class World {
       holdPosition: false,
       task: null,
       carry: null,
+      combat: null,
+      attackMoveResume: null,
     };
     this.units.set(u.id, u);
     this.recomputePop(owner);
@@ -209,7 +229,35 @@ export class World {
           u.path = null;
           u.holdPosition = false;
           u.task = null;
+          u.combat = null;
         }
+      }
+      return;
+    }
+    if (cmd.type === 'formation') {
+      this.playerFormation[cmd.player] = cmd.formation;
+      return;
+    }
+    if (cmd.type === 'attack') {
+      const tgtU = cmd.targetUnitId != null ? this.units.get(cmd.targetUnitId) : null;
+      const tgtB = cmd.targetBuildingId != null ? this.buildings.get(cmd.targetBuildingId) : null;
+      if (!tgtU && !tgtB) return;
+      for (const id of cmd.unitIds) {
+        const u = this.units.get(id);
+        if (!u || u.owner !== cmd.player) continue;
+        const def = unitDef(u.type);
+        if (def.family === 'worker') continue; // workers don't fight on command (they flee later)
+        u.task = null;
+        u.holdPosition = false;
+        u.combat = {
+          unitId: tgtU ? tgtU.id : null,
+          buildingId: tgtB ? tgtB.id : null,
+          cooldown: 0,
+        };
+        // move toward the target
+        const gx = tgtU ? tgtU.x : (tgtB!.tx + buildingDef(tgtB!.key).w / 2) * TILE;
+        const gy = tgtU ? tgtU.y : (tgtB!.ty + buildingDef(tgtB!.key).h / 2) * TILE;
+        this.requestPath(u, Math.floor(gx / TILE), Math.floor(gy / TILE));
       }
       return;
     }
@@ -268,19 +316,21 @@ export class World {
       b.queue.push({ unitKey: cmd.unitKey, remaining: udef.trainTime, total: udef.trainTime });
       return;
     }
-    // move / attackMove: path per unit, spread group targets around the point
+    // move / attackMove: path per unit, formation offsets around the point
     const kind = cmd.type;
+    const offsets = formationOffsets(this.playerFormation[cmd.player] ?? 'loose');
     let n = 0;
     for (const id of cmd.unitIds) {
       const u = this.units.get(id);
       if (!u || u.owner !== cmd.player) continue;
-      const ring = n === 0 ? [0, 0] : SPIRAL[n % SPIRAL.length];
+      const ring = n === 0 ? [0, 0] : offsets[n % offsets.length];
       n++;
       const tx = cmd.tx + ring[0];
       const ty = cmd.ty + ring[1];
       u.order = { kind, tx, ty };
       u.holdPosition = false;
       u.task = null; // manual move cancels work tasks
+      if (kind === 'move') u.combat = null; // explicit move disengages
       this.requestPath(u, tx, ty);
     }
   }
@@ -312,7 +362,31 @@ export class World {
     this.pathQueue.drain();
     this.movement.tick(this, dtMs);
     this.economy.tick(this, dtMs);
+    this.combat.tick(this, dtMs);
+    this.scanAggroSubset();
     this.fog.update(this);
+  }
+
+  private aggroCursor = 0;
+  /** Round-robin aggro scan: 1/16th of units per tick (O(n²) amortized). */
+  private scanAggroSubset() {
+    const list = [...this.units.values()];
+    if (!list.length) return;
+    const chunk = Math.max(1, Math.ceil(list.length / 16));
+    const start = this.aggroCursor % list.length;
+    for (let i = start; i < start + chunk && i < list.length; i++) {
+      const u = list[i];
+      if (u.combat || u.task) continue;
+      if (u.holdPosition || (u.order && u.order.kind === 'attackMove') || !u.order) {
+        this.combat.scanAggro(this, u);
+      }
+    }
+    this.aggroCursor = (start + chunk) % list.length;
+  }
+
+  /** Projectiles visible to renderers (client-side effect layer). */
+  get projectiles() {
+    return this.combat.projectiles;
   }
 
   unitAtPx(x: number, y: number, r = 14): UnitState | null {
@@ -375,7 +449,7 @@ export interface SerializedWorld {
   woodAmount: number[];
 }
 
-// ring offsets for group move targets — keeps formations from stacking
+// formation offsets for group move targets — prevents stacking, shapes the army
 const SPIRAL: [number, number][] = [];
 {
   let x = 0;
@@ -388,4 +462,15 @@ const SPIRAL: [number, number][] = [];
     x += dx;
     y += dy;
   }
+}
+
+const FORMATIONS: Record<Formation, [number, number][]> = {
+  loose: SPIRAL,
+  line: [[0, 0], [1, 0], [-1, 0], [2, 0], [-2, 0], [3, 0], [-3, 0], [4, 0], [-4, 0], [0, 1], [1, 1], [-1, 1], [2, 1], [-2, 1], [3, 1], [-3, 1]],
+  wedge: [[0, 0], [-1, 1], [1, 1], [-2, 2], [0, 2], [2, 2], [-3, 3], [-1, 3], [1, 3], [3, 3], [-4, 4], [-2, 4], [0, 4], [2, 4], [4, 4]],
+  square: [[-1, -1], [0, -1], [1, -1], [2, -1], [-1, 0], [2, 0], [-1, 1], [2, 1], [-1, 2], [0, 2], [1, 2], [2, 2], [0, 0], [1, 0], [0, 1], [1, 1]],
+};
+
+export function formationOffsets(f: Formation): [number, number][] {
+  return FORMATIONS[f] ?? SPIRAL;
 }
