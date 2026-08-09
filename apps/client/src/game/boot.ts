@@ -13,7 +13,9 @@ export function bootGame(parent: HTMLElement, config: BootConfig): Phaser.Game {
       height: parent.clientHeight || window.innerHeight,
     },
     scene: [WorldScene],
-    fps: { target: 60 },
+    // ?e2e=1: drive the loop by setTimeout — headless browsers throttle RAF
+    // on occluded/background pages, which would freeze the sim otherwise
+    fps: { target: 60, forceSetTimeOut: new URLSearchParams(location.search).has('e2e') },
     banner: false,
   });
   // Phaser boots scenes on its first RAF, after this synchronous block
