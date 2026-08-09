@@ -17,7 +17,7 @@ Each phase ends with: tests green, `typecheck` green, `lint` green,
       diplomacy, city capture by occupation.
 - [x] Phase 6 — AI: economy/expansion/military planners, faction personas,
       difficulty tiers, anti-cheat audit test (Hard AI gains no free stuff).
-- [ ] Phase 7 — UX: main menu, faction select, skirmish setup, minimap,
+- [x] Phase 7 — UX: main menu, faction select, skirmish setup, minimap,
       notifications, settings, game speeds, save/load (local + server),
       Playwright flows (new game / place building / train unit / move order).
 - [ ] Phase 8 — Multiplayer: rooms, lobby, ready, 2–4 players, server-
