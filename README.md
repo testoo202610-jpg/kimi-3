@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./docs/assets/crimson-ramparts-hero.svg" alt="Crimson Ramparts Three Realms" width="100%" />
+</p>
+
 # Crimson Ramparts — Three Realms
 
 An original real-time strategy game prototype inspired by the strategic themes of settlement growth, supply-driven armies, generals, territorial control, and conquest.
