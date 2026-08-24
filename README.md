@@ -1,37 +1,38 @@
 # Crimson Ramparts — Three Realms
 
-An original browser-based real-time strategy game inspired by classic Three
-Kingdoms-era RTS design: settlement growth, food-driven armies, generals,
-territory and conquest. All code, map, art and names are original work —
-no copyrighted assets or content from any existing game.
+An original real-time strategy game prototype inspired by the strategic themes of settlement growth, supply-driven armies, generals, territorial control, and conquest.
 
-## Stack
+> **Project status:** architecture and gameplay exploration. This repository demonstrates a scalable client/server RTS structure and is maintained as a separate concept from the Dragon Kingdoms projects.
 
-- Client: TypeScript + React + Vite + Phaser 3 + Zustand
-- Server: Node.js + TypeScript + Fastify (+ WebSocket, later phases)
-- Simulation: dependency-free `packages/game-core` (shared by client & server)
-- DB: PostgreSQL via docker-compose (persistent saves/auth land in Phase 7–8)
-- Tests: Vitest (core logic), Playwright (browser flows, Phase 7)
+## Architecture
+
+- `apps/client`: React, Vite, Phaser 3, and Zustand game client.
+- `apps/server`: Fastify API foundation for later authentication, saves, and multiplayer.
+- `packages/game-core`: dependency-free deterministic simulation shared by client and server.
+- `packages/shared`: constants and shared TypeScript types.
+- PostgreSQL via Docker Compose for later persistent game features.
+
+## Engineering focus
+
+- Clear separation between rendering, networking, and simulation.
+- Workspace-based TypeScript monorepo structure.
+- Pure game-core logic designed for testing and future server authority.
+- A phased route toward persistence, authentication, browser tests, and multiplayer.
 
 ## Requirements
 
-- Node.js >= 20
-- npm >= 10
+- Node.js 20+
+- npm 10+
 
-## Install
+## Run locally
 
 ```bash
 npm install
+npm run dev
+npm run dev:server
 ```
 
-## Develop
-
-```bash
-npm run dev          # Vite dev server (game client) on :5173
-npm run dev:server   # Fastify API on :4000 (optional in Phase 1)
-```
-
-## Test / typecheck / lint / build
+## Verify
 
 ```bash
 npm run test
@@ -40,21 +41,10 @@ npm run lint
 npm run build
 ```
 
-## Docker (local environment)
+## Local database
 
 ```bash
-docker compose up db      # postgres only (default for dev)
-docker compose up         # db + api server
+docker compose up db
 ```
 
-Create `apps/server/.env` (see `apps/server/.env.example`) to change ports.
-
-## Layout
-
-```
-apps/client        Phaser + React game client
-apps/server        Fastify API (auth, saves, multiplayer — later phases)
-packages/game-core Deterministic RTS simulation (map, units, systems)
-packages/shared    Constants/types shared by client & server
-docs are in repo root: ARCHITECTURE.md, GAME_DESIGN.md, ROADMAP.md
-```
+Use `apps/server/.env.example` as the reference for optional server configuration.
